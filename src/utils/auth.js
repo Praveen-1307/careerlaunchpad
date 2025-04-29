@@ -1,4 +1,5 @@
 // Local authentication utilities using localStorage
+import { auth } from '../firebase';
 
 // Validate email domain - allow any email
 export const isValidDomain = (email) => {
@@ -107,8 +108,37 @@ export const isAuthenticated = () => {
 
 // Get current user
 export const getCurrentUser = () => {
-  const user = localStorage.getItem('currentUser');
-  return user ? JSON.parse(user) : null;
+  try {
+    // Try to get user from localStorage
+    const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    
+    // Return the user if it exists
+    if (user && user.email) {
+      return user;
+    }
+    
+    // If no valid user in localStorage, check if Firebase auth has a user
+    const firebaseUser = auth.currentUser;
+    if (firebaseUser) {
+      // Create a user object from Firebase user
+      const userObj = {
+        firstName: firebaseUser.displayName ? firebaseUser.displayName.split(' ')[0] : 'User',
+        lastName: firebaseUser.displayName ? firebaseUser.displayName.split(' ').slice(1).join(' ') : '',
+        email: firebaseUser.email,
+        uid: firebaseUser.uid
+      };
+      
+      // Store in localStorage for future use
+      localStorage.setItem('currentUser', JSON.stringify(userObj));
+      return userObj;
+    }
+    
+    // No user found in localStorage or Firebase auth
+    return null;
+  } catch (error) {
+    console.error('Error getting current user:', error);
+    return null;
+  }
 };
 
 // Clear all users and reset to initial state

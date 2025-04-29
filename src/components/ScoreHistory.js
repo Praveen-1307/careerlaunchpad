@@ -43,6 +43,8 @@ import StarIcon from '@mui/icons-material/Star';
 import SpeedIcon from '@mui/icons-material/Speed';
 import { useNavigate } from 'react-router-dom';
 import { getCurrentUser } from '../utils/auth';
+import { auth, db } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 const ScoreHistory = ({ darkMode }) => {
   const navigate = useNavigate();
@@ -56,19 +58,80 @@ const ScoreHistory = ({ darkMode }) => {
   const [achievements, setAchievements] = useState([]);
 
   useEffect(() => {
-    const currentUser = getCurrentUser();
-    if (currentUser) {
-      setUser(currentUser);
-      const historyKey = `quizHistory_${currentUser.email}`;
-      const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
-      setQuizHistory(history);
-      calculateCategoryBreakdown(history);
-      calculateAchievements(history);
-      setLoading(false);
-      setShowStats(true);
-    } else {
-      navigate('/signin');
-    }
+    const fetchUserData = async () => {
+      try {
+        // Get Firebase auth user first
+        const firebaseUser = auth.currentUser;
+        
+        if (firebaseUser) {
+          // Try to get user data from Firestore
+          const docRef = doc(db, 'users', firebaseUser.uid);
+          const docSnap = await getDoc(docRef);
+          
+          let userData;
+          if (docSnap.exists()) {
+            // Use data from Firestore
+            const firestoreData = docSnap.data();
+            userData = {
+              uid: firebaseUser.uid,
+              firstName: firestoreData.firstName || firebaseUser.displayName?.split(' ')[0] || 'User',
+              lastName: firestoreData.lastName || firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+              email: firebaseUser.email
+            };
+          } else {
+            // No Firestore record, use Firebase auth data
+            userData = {
+              uid: firebaseUser.uid,
+              firstName: firebaseUser.displayName?.split(' ')[0] || 'User',
+              lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+              email: firebaseUser.email
+            };
+          }
+          
+          setUser(userData);
+          
+          // Load quiz history for this user
+          const historyKey = `quizHistory_${userData.email}`;
+          const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+          setQuizHistory(history);
+          calculateCategoryBreakdown(history);
+          calculateAchievements(history);
+          
+          // Save consistent user data
+          localStorage.setItem('currentUser', JSON.stringify(userData));
+        } else {
+          // Fallback to local user
+          const currentUser = getCurrentUser();
+          if (currentUser) {
+            setUser(currentUser);
+            const historyKey = `quizHistory_${currentUser.email}`;
+            const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+            setQuizHistory(history);
+            calculateCategoryBreakdown(history);
+            calculateAchievements(history);
+          } else {
+            // No user found, redirect to login
+            navigate('/signin');
+            return;
+          }
+        }
+        
+        setLoading(false);
+        setShowStats(true);
+      } catch (error) {
+        console.error("Error fetching user data:", error);
+        setLoading(false);
+        // Attempt to fall back to local auth as a last resort
+        const currentUser = getCurrentUser();
+        if (currentUser) {
+          setUser(currentUser);
+        } else {
+          navigate('/signin');
+        }
+      }
+    };
+    
+    fetchUserData();
   }, [navigate]);
 
   const calculateCategoryBreakdown = (history) => {
@@ -226,24 +289,36 @@ const ScoreHistory = ({ darkMode }) => {
             </Typography>
             {user && (
               <Stack direction="row" spacing={1} alignItems="center">
-                <Avatar 
+                <Typography 
+                  variant="subtitle1" 
                   sx={{ 
-                    bgcolor: theme.palette.primary.main,
-                    width: 40,
-                    height: 40,
-                    border: `2px solid ${theme.palette.primary.light}`,
-                    boxShadow: `0 0 10px ${theme.palette.primary.light}`,
-                    '&:hover': {
-                      transform: 'scale(1.1)',
-                      transition: 'transform 0.3s ease-in-out'
-                    }
+                    mr: 1, 
+                    display: { xs: 'none', sm: 'block' },
+                    color: darkMode ? 'inherit' : 'primary.main',
+                    fontWeight: 'medium'
                   }}
                 >
-                  {user.firstName?.[0]}{user.lastName?.[0]}
-                </Avatar>
-                <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
                   {user.firstName} {user.lastName}
                 </Typography>
+                <Tooltip title={`${user.firstName} ${user.lastName}`}>
+                  <Avatar 
+                    sx={{ 
+                      bgcolor: darkMode ? theme.palette.primary.main : '#1976d2',
+                      width: 40,
+                      height: 40,
+                      border: `2px solid ${darkMode ? theme.palette.primary.light : '#42a5f5'}`,
+                      boxShadow: `0 0 10px ${darkMode ? theme.palette.primary.light : 'rgba(66, 165, 245, 0.5)'}`,
+                      color: 'white',
+                      fontWeight: 'bold',
+                      '&:hover': {
+                        transform: 'scale(1.1)',
+                        transition: 'transform 0.3s ease-in-out'
+                      }
+                    }}
+                  >
+                    {user.firstName?.[0]}{user.lastName?.[0]}
+                  </Avatar>
+                </Tooltip>
               </Stack>
             )}
           </Toolbar>

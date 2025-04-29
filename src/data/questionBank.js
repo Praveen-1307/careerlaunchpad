@@ -1,8 +1,7 @@
 // This file contains all aptitude questions for the app
 // Questions are categorized by topic
 
-// export const questionBank = [
-const questionBank = [
+export const questionBank = [
   // Trains category
   {
     category: "Trains",
@@ -2098,7 +2097,14 @@ const questionBank = [
 // Function to get random questions for a specific user, avoiding repeats until all are covered
 export const getRandomQuestions = (n = 30, user = null) => {
   // Gather all questions flat
-  const allQuestions = questionBank.flatMap(cat => cat.questions);
+  const allQuestions = questionBank.flatMap(cat => {
+    // Add category to each question
+    return cat.questions.map(q => ({
+      ...q,
+      category: cat.category
+    }));
+  });
+  
   let answeredIds = [];
   let userKey = null;
   if (user && user.email) {
@@ -2106,45 +2112,25 @@ export const getRandomQuestions = (n = 30, user = null) => {
     answeredIds = JSON.parse(localStorage.getItem(userKey) || '[]');
   }
 
-  // 1. Select one random, unseen question from each category
-  let result = [];
-  const usedIds = new Set();
-  let unseenCount = 0;
-  questionBank.forEach(categoryObj => {
-    const unseen = categoryObj.questions.filter(q => !answeredIds.includes(q.id));
-    if (unseen.length > 0) unseenCount++;
-    const pool = unseen.length > 0 ? unseen : categoryObj.questions; // fallback if all seen
-    if (pool.length > 0) {
-      const randomIndex = Math.floor(Math.random() * pool.length);
-      result.push(pool[randomIndex]);
-      usedIds.add(pool[randomIndex].id);
-    }
-  });
+  // Filter available questions
+  let availableQuestions = allQuestions.filter(q => !answeredIds.includes(q.id));
 
-  // 2. Fill the rest with random, non-repeated questions from the remaining pool
-  let availableQuestions = allQuestions.filter(q => !answeredIds.includes(q.id) && !usedIds.has(q.id));
-  let resetPool = false;
-  if (result.length + availableQuestions.length < n) {
-    // Not enough unseen questions left for a full set, reset the answered list
-    resetPool = true;
+  // If not enough questions left, reset the pool
+  if (availableQuestions.length < n) {
     if (userKey) localStorage.setItem(userKey, JSON.stringify([]));
-    availableQuestions = allQuestions.filter(q => !usedIds.has(q.id));
+    availableQuestions = allQuestions;
     answeredIds = [];
   }
-  const remainingSlots = n - result.length;
-  if (remainingSlots > 0) {
-    const shuffled = [...availableQuestions].sort(() => 0.5 - Math.random());
-    result = result.concat(shuffled.slice(0, remainingSlots));
-  }
 
-  // 3. Update answered list in localStorage
+  // Shuffle and pick n random questions
+  const shuffled = [...availableQuestions].sort(() => 0.5 - Math.random());
+  const result = shuffled.slice(0, n);
+
+  // Update answered list in localStorage
   if (userKey) {
     const newAnsweredIds = Array.from(new Set([...answeredIds, ...result.map(q => q.id)]));
     localStorage.setItem(userKey, JSON.stringify(newAnsweredIds));
   }
-
-  // Optionally, you could notify the user if the pool was reset
-  // if (resetPool) alert('All questions have been covered. The pool is resetting.');
 
   return result;
 };

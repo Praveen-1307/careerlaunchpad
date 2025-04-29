@@ -12,6 +12,8 @@ import {
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { getCurrentUser, updateUser } from '../utils/auth';
+import { auth, db } from '../firebase';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 
 const EditProfile = () => {
   const navigate = useNavigate();
@@ -24,35 +26,100 @@ const EditProfile = () => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const currentUser = getCurrentUser();
-    if (currentUser) {
-      setUser(currentUser);
-      setFirstName(currentUser.firstName);
-      setLastName(currentUser.lastName);
-      setEmail(currentUser.email);
-    } else {
-      navigate('/signin');
-    }
+    const fetchUserData = async () => {
+      // First try to get Firebase user
+      const firebaseUser = auth.currentUser;
+      
+      if (firebaseUser) {
+        try {
+          // Try to get user data from Firestore
+          const docRef = doc(db, 'users', firebaseUser.uid);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            // Use Firestore data
+            const userData = docSnap.data();
+            setUser({
+              ...userData,
+              uid: firebaseUser.uid,
+              email: firebaseUser.email
+            });
+            setFirstName(userData.firstName || '');
+            setLastName(userData.lastName || '');
+            setEmail(firebaseUser.email);
+          } else {
+            // No Firestore record, use Firebase auth data
+            setUser({
+              uid: firebaseUser.uid,
+              email: firebaseUser.email
+            });
+            setFirstName(firebaseUser.displayName?.split(' ')[0] || '');
+            setLastName(firebaseUser.displayName?.split(' ').slice(1).join(' ') || '');
+            setEmail(firebaseUser.email);
+          }
+          return;
+        } catch (err) {
+          console.error("Error fetching Firestore data:", err);
+        }
+      }
+      
+      // Fallback to local auth if Firebase fails
+      const currentUser = getCurrentUser();
+      if (currentUser) {
+        setUser(currentUser);
+        setFirstName(currentUser.firstName || '');
+        setLastName(currentUser.lastName || '');
+        setEmail(currentUser.email);
+      } else {
+        navigate('/signin');
+      }
+    };
+    
+    fetchUserData();
   }, [navigate]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    
     if (!firstName || !lastName) {
       setError('First and last name are required.');
       return;
     }
-    // Update user in localStorage (simulate updateUser)
+    
     try {
-      updateUser({
-        ...user,
-        firstName,
-        lastName,
-        password: password ? password : user.password,
-      });
+      const firebaseUser = auth.currentUser;
+      
+      if (firebaseUser) {
+        // Update Firestore document
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        await updateDoc(userDocRef, {
+          firstName,
+          lastName,
+          updatedAt: new Date().toISOString()
+        });
+        
+        // Also update localStorage for components that use it
+        const updatedUser = {
+          ...user,
+          firstName,
+          lastName
+        };
+        localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+      } else {
+        // Fallback to local auth update
+        updateUser({
+          ...user,
+          firstName,
+          lastName,
+          password: password ? password : user.password,
+        });
+      }
+      
       setSuccess(true);
       setTimeout(() => navigate('/home'), 1500);
     } catch (err) {
+      console.error("Profile update error:", err);
       setError('Failed to update profile.');
     }
   };
@@ -92,15 +159,17 @@ const EditProfile = () => {
             margin="normal"
             disabled
           />
-          <TextField
-            label="New Password"
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            fullWidth
-            margin="normal"
-            helperText="Leave blank to keep current password"
-          />
+          {!auth.currentUser && (
+            <TextField
+              label="New Password"
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              fullWidth
+              margin="normal"
+              helperText="Leave blank to keep current password"
+            />
+          )}
           {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
           {success && <Alert severity="success" sx={{ mt: 2 }}>Profile updated successfully!</Alert>}
           <Button

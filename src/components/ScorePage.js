@@ -26,6 +26,9 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import HomeIcon from '@mui/icons-material/Home';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import { getCurrentUser } from '../utils/auth';
+import { auth } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 const ScorePage = ({ darkMode }) => {
   const location = useLocation();
@@ -35,35 +38,108 @@ const ScorePage = ({ darkMode }) => {
   const [user, setUser] = useState(null);
   
   useEffect(() => {
-    // Get current user
-    const currentUser = getCurrentUser();
-    if (currentUser) {
-      setUser(currentUser);
-    }
-    
-    // If state was passed directly through navigation
-    if (location.state) {
-      setScoreData(location.state);
-      setLoading(false);
-      return;
-    }
-    
-    // Otherwise try to get the most recent quiz from user-specific history
-    if (currentUser) {
-      const userHistoryKey = `quizHistory_${currentUser.email}`;
-      const userHistory = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
-      if (userHistory.length > 0) {
-        // Get the most recent quiz
-        const latestQuiz = userHistory[userHistory.length - 1];
-        setScoreData({
-          score: latestQuiz.score,
-          totalQuestions: latestQuiz.totalQuestions,
-          questions: latestQuiz.questions
-        });
+    // First check if user data was passed directly from quiz page
+    if (location.state?.user) {
+      setUser(location.state.user);
+      console.log("Using user data from quiz page:", location.state.user);
+    } else {
+      // Get Firebase auth user next
+      const firebaseUser = auth.currentUser;
+      let userEmail = null;
+      
+      if (firebaseUser) {
+        try {
+          // Try to get user data from Firestore
+          const getUserFromFirestore = async () => {
+            const docRef = doc(db, 'users', firebaseUser.uid);
+            const docSnap = await getDoc(docRef);
+            
+            if (docSnap.exists()) {
+              const firestoreData = docSnap.data();
+              const userData = {
+                uid: firebaseUser.uid,
+                firstName: firestoreData.firstName || firebaseUser.displayName?.split(' ')[0] || 'User',
+                lastName: firestoreData.lastName || firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+                email: firebaseUser.email
+              };
+              setUser(userData);
+              userEmail = userData.email;
+            } else {
+              // No Firestore record, use Firebase auth data
+              const userData = {
+                uid: firebaseUser.uid,
+                firstName: firebaseUser.displayName?.split(' ')[0] || 'User',
+                lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+                email: firebaseUser.email
+              };
+              setUser(userData);
+              userEmail = userData.email;
+            }
+            
+            // Now check for score data
+            loadScoreData(userEmail);
+          };
+          
+          getUserFromFirestore();
+          return; // Early return as we're handling async
+        } catch (err) {
+          console.error("Error fetching user data from Firestore:", err);
+          // Fallback to just Firebase auth data
+          const userData = {
+            firstName: firebaseUser.displayName?.split(' ')[0] || 'User',
+            lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+            email: firebaseUser.email
+          };
+          setUser(userData);
+          userEmail = firebaseUser.email;
+        }
+      } else {
+        // Fallback to local user
+        const currentUser = getCurrentUser();
+        if (currentUser) {
+          setUser(currentUser);
+          userEmail = currentUser.email;
+        }
+      }
+      
+      // Load score data if we have a user email
+      if (userEmail) {
+        loadScoreData(userEmail);
+      } else {
+        setLoading(false);
       }
     }
-    setLoading(false);
+    
+    // If state was passed directly through navigation, use that for score data
+    if (location.state && location.state.score !== undefined) {
+      setScoreData({
+        score: location.state.score,
+        totalQuestions: location.state.totalQuestions,
+        questions: location.state.questions
+      });
+      setLoading(false);
+    }
   }, [location.state]);
+  
+  // Helper function to load score data from localStorage
+  const loadScoreData = (userEmail) => {
+    if (!userEmail) return;
+    
+    const userHistoryKey = `quizHistory_${userEmail}`;
+    const userHistory = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
+    
+    if (userHistory.length > 0) {
+      // Get the most recent quiz
+      const latestQuiz = userHistory[userHistory.length - 1];
+      setScoreData({
+        score: latestQuiz.score,
+        totalQuestions: latestQuiz.totalQuestions,
+        questions: latestQuiz.questions
+      });
+    }
+    
+    setLoading(false);
+  };
   
   // Get user initials for avatar
   const getInitials = () => {
@@ -166,20 +242,47 @@ const ScorePage = ({ darkMode }) => {
             color="inherit"
             aria-label="history"
             onClick={() => navigate('/score-history')}
-            sx={{ mr: 1 }}
+            sx={{ 
+              mr: 1,
+              bgcolor: darkMode ? 'transparent' : 'rgba(25, 118, 210, 0.08)',
+              '&:hover': {
+                bgcolor: darkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(25, 118, 210, 0.12)',
+              }
+            }}
           >
-            <AssessmentIcon />
+            <AssessmentIcon color={darkMode ? "inherit" : "primary"} />
           </IconButton>
           {user && (
             <Tooltip title={`${user.firstName} ${user.lastName}`}>
-              <Avatar sx={{ 
-                width: 32, 
-                height: 32, 
-                bgcolor: darkMode ? 'primary.dark' : 'primary.light',
-                color: 'white'
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center',
+                bgcolor: darkMode ? 'transparent' : 'rgba(25, 118, 210, 0.08)',
+                borderRadius: 2,
+                px: 1.5,
+                py: 0.5
               }}>
-                {getInitials()}
-              </Avatar>
+                <Typography 
+                  variant="subtitle2"
+                  sx={{ 
+                    mr: 1, 
+                    display: { xs: 'none', sm: 'block' },
+                    color: darkMode ? 'inherit' : 'primary.main',
+                    fontWeight: 'medium'
+                  }}
+                >
+                  {user.firstName} {user.lastName}
+                </Typography>
+                <Avatar sx={{ 
+                  width: 32, 
+                  height: 32, 
+                  bgcolor: darkMode ? 'primary.dark' : 'primary.main',
+                  color: 'white',
+                  fontWeight: 'bold'
+                }}>
+                  {getInitials()}
+                </Avatar>
+              </Box>
             </Tooltip>
           )}
         </Toolbar>

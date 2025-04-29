@@ -27,6 +27,8 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { getRandomQuestions } from '../data/questionBank';
 import { getCurrentUser } from '../utils/auth';
+import { auth, db } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 const QuizPage = ({ darkMode }) => {
   const navigate = useNavigate();
@@ -39,22 +41,87 @@ const QuizPage = ({ darkMode }) => {
   const [answeredQuestions, setAnsweredQuestions] = useState(new Set());
   
   useEffect(() => {
-    // Get current user
-    const currentUser = getCurrentUser();
-    if (currentUser) {
-      setUser(currentUser);
-      // Load random questions for this user
-      setQuestions(getRandomQuestions(30, currentUser));
-    } else {
-      setQuestions([]);
-    }
-    setLoading(false);
-  }, []);
+    const fetchUserData = async () => {
+      // Get Firebase user first
+      const firebaseUser = auth.currentUser;
+      let userData = null;
+      
+      if (firebaseUser) {
+        try {
+          // Try to get user data from Firestore first
+          const docRef = doc(db, 'users', firebaseUser.uid);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            // Use data from Firestore
+            const firestoreData = docSnap.data();
+            userData = {
+              uid: firebaseUser.uid,
+              firstName: firestoreData.firstName || firebaseUser.displayName?.split(' ')[0] || 'User',
+              lastName: firestoreData.lastName || firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+              email: firebaseUser.email
+            };
+          } else {
+            // No Firestore record, use Firebase auth data
+            userData = {
+              uid: firebaseUser.uid,
+              firstName: firebaseUser.displayName?.split(' ')[0] || 'User',
+              lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+              email: firebaseUser.email
+            };
+          }
+          
+          // Store consistent user data in localStorage
+          localStorage.setItem('currentUser', JSON.stringify(userData));
+        } catch (err) {
+          console.error("Error fetching user data from Firestore:", err);
+          // Fall back to using just the Firebase auth data
+          userData = {
+            uid: firebaseUser.uid,
+            firstName: firebaseUser.displayName?.split(' ')[0] || 'User',
+            lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+            email: firebaseUser.email
+          };
+        }
+      } else {
+        // Fallback to local user
+        userData = getCurrentUser();
+        if (!userData) {
+          console.log("No authenticated user found");
+          navigate('/signin');
+          return null;
+        }
+      }
+      
+      return userData;
+    };
+    
+    const initializeQuiz = async () => {
+      try {
+        const userData = await fetchUserData();
+        if (!userData) return; // No user data available or redirected to signin
+        
+        console.log("Quiz initialized with user:", userData);
+        setUser(userData);
+        
+        // Load random questions for this user
+        const fetchedQuestions = getRandomQuestions(30, userData);
+        console.log("Fetched questions:", fetchedQuestions.length);
+        setQuestions(fetchedQuestions);
+        setLoading(false);
+      } catch (error) {
+        console.error("Error initializing quiz:", error);
+        setLoading(false);
+      }
+    };
+    
+    initializeQuiz();
+  }, [navigate]);
   
   // Get user initials for avatar
   const getInitials = () => {
     if (!user) return '';
-    return `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`;
+    return `${(user.firstName || '').charAt(0)}${(user.lastName || '').charAt(0)}`;
   };
   
   // Memoize handleSubmit to avoid dependency warning
@@ -72,6 +139,7 @@ const QuizPage = ({ darkMode }) => {
       date: new Date().toISOString(),
       score,
       totalQuestions: questions.length,
+      category: questions[0]?.category || 'General',
       questions: questions.map((q, index) => ({
         question: q.question,
         correctAnswer: q.correctAnswer,
@@ -80,28 +148,27 @@ const QuizPage = ({ darkMode }) => {
       }))
     };
     
-    // Get current user and store history per user
-    const currentUser = getCurrentUser();
-    if (currentUser) {
-      // Create a unique key for this user's quiz history
-      const userHistoryKey = `quizHistory_${currentUser.email}`;
-      
-      // Get existing history for this user or create a new array
+    if (user) {
+      // Always save with the logged-in user's email
+      const userHistoryKey = `quizHistory_${user.email}`;
       const userHistory = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
       userHistory.push(quizResult);
-      
-      // Save back to localStorage with the user-specific key
       localStorage.setItem(userHistoryKey, JSON.stringify(userHistory));
-      
-      // Also maintain the global history for backward compatibility
-      const globalHistory = JSON.parse(localStorage.getItem('quizHistory') || '[]');
-      globalHistory.push(quizResult);
-      localStorage.setItem('quizHistory', JSON.stringify(globalHistory));
+      console.log(`Quiz result saved for ${user.email}`);
+    } else {
+      console.warn("No user found when saving quiz results");
     }
     
-    // Navigate to score page
-    navigate('/score', { state: { score, totalQuestions: questions.length, questions: quizResult.questions } });
-  }, [questions, answers, navigate]);
+    // Navigate to score page with the same user data
+    navigate('/score', { 
+      state: { 
+        score, 
+        totalQuestions: questions.length, 
+        questions: quizResult.questions,
+        user: user // Pass along the user data to ensure consistency
+      } 
+    });
+  }, [questions, answers, navigate, user]);
   
   const handleAnswerChange = (e) => {
     setAnswers({
@@ -165,21 +232,42 @@ const QuizPage = ({ darkMode }) => {
             Career Launch Pad - Aptitude Test
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <HelpOutlineIcon sx={{ mr: 1 }} />
-            <Typography variant="subtitle1" sx={{ mr: 2 }}>
+            <HelpOutlineIcon sx={{ mr: 1, color: darkMode ? 'inherit' : 'primary.main' }} />
+            <Typography variant="subtitle1" sx={{ mr: 2, color: darkMode ? 'inherit' : 'text.primary', fontWeight: 'medium' }}>
               Questions: {Object.keys(answers).length}/{questions.length}
             </Typography>
             {user && (
-              <Tooltip title={`${user.firstName} ${user.lastName}`}>
-                <Avatar sx={{ 
-                  width: 32, 
-                  height: 32, 
-                  bgcolor: darkMode ? 'primary.dark' : 'primary.light',
-                  color: 'white'
-                }}>
-                  {getInitials()}
-                </Avatar>
-              </Tooltip>
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center',
+                bgcolor: darkMode ? 'transparent' : 'rgba(25, 118, 210, 0.08)',
+                borderRadius: 2,
+                px: 1.5,
+                py: 0.5
+              }}>
+                <Typography 
+                  variant="subtitle2" 
+                  sx={{ 
+                    mr: 1, 
+                    display: { xs: 'none', sm: 'block' },
+                    color: darkMode ? 'inherit' : 'primary.main',
+                    fontWeight: 'medium'
+                  }}
+                >
+                  {user.firstName} {user.lastName}
+                </Typography>
+                <Tooltip title={`${user.firstName} ${user.lastName}`}>
+                  <Avatar sx={{ 
+                    width: 32, 
+                    height: 32, 
+                    bgcolor: darkMode ? 'primary.dark' : 'primary.main',
+                    color: 'white',
+                    fontWeight: 'bold'
+                  }}>
+                    {getInitials()}
+                  </Avatar>
+                </Tooltip>
+              </Box>
             )}
           </Box>
         </Toolbar>
@@ -254,7 +342,16 @@ const QuizPage = ({ darkMode }) => {
             </Box>
           </Box>
           
-          {questions.length > 0 && (
+          {questions.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 5 }}>
+              <Typography variant="h6" color="text.secondary">
+                No questions available to display.
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                Please try refreshing the page or contact support.
+              </Typography>
+            </Box>
+          ) : (
             <Card variant="outlined" sx={{ 
               mb: 3,
               borderRadius: 2,

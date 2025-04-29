@@ -29,6 +29,7 @@ import {
   RadioGroup,
   FormControlLabel,
   Radio,
+  CircularProgress,
 } from '@mui/material';
 import { keyframes } from '@mui/system';
 import LightModeIcon from '@mui/icons-material/LightMode';
@@ -50,10 +51,11 @@ import BookIcon from '@mui/icons-material/Book';
 import PeopleIcon from '@mui/icons-material/People';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import DescriptionIcon from '@mui/icons-material/Description';
-import { logoutUser, getUsers } from '../utils/auth';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import { logoutUser, getUsers, getCurrentUser } from '../utils/auth';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 
 const Home = ({ darkMode, toggleTheme }) => {
@@ -277,9 +279,15 @@ const Home = ({ darkMode, toggleTheme }) => {
   // UpdateDailyChallenge: persist daily challenge for the day
   const updateDailyChallenge = () => {
     const today = new Date().toDateString();
-    const userKey = firebaseUser?.email || 'guest';
-    const challengeKey = `dailyChallenge_${userKey}_${today}`;
-    const answersKey = `dailyChallengeAnswers_${userKey}_${today}`;
+    
+    // Get user ID from Firebase first, then fallback to local storage
+    const userEmail = firebaseUser?.email;
+    
+    // If no userEmail, we can't save user-specific data
+    if (!userEmail) return;
+    
+    const challengeKey = `dailyChallenge_${userEmail}_${today}`;
+    const answersKey = `dailyChallengeAnswers_${userEmail}_${today}`;
 
     // Try to load challenge from localStorage
     const savedChallenge = JSON.parse(localStorage.getItem(challengeKey) || 'null');
@@ -344,8 +352,27 @@ const Home = ({ darkMode, toggleTheme }) => {
   
   // Get user initials for avatar
   const getInitials = () => {
-    if (!profile) return '';
-    return `${profile.firstName.charAt(0)}${profile.lastName.charAt(0)}`;
+    if (profile && profile.firstName && profile.lastName) {
+      return `${profile.firstName.charAt(0)}${profile.lastName.charAt(0)}`;
+    }
+    
+    if (firebaseUser) {
+      if (firebaseUser.displayName) {
+        const nameParts = firebaseUser.displayName.split(' ');
+        if (nameParts.length >= 2) {
+          return `${nameParts[0].charAt(0)}${nameParts[1].charAt(0)}`;
+        }
+        return nameParts[0].charAt(0);
+      }
+      return firebaseUser.email.charAt(0).toUpperCase();
+    }
+    
+    const currentUser = getCurrentUser();
+    if (currentUser && currentUser.firstName && currentUser.lastName) {
+      return `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}`;
+    }
+    
+    return 'U';
   };
   
   // Calculate average score
@@ -429,32 +456,144 @@ const Home = ({ darkMode, toggleTheme }) => {
   `;
   
   // Leaderboard calculation based on real users
-  const getLeaderboard = () => {
-    const users = getUsers();
-    const leaderboard = users.map(user => {
-      const userHistoryKey = `quizHistory_${user.email}`;
-      const history = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
-      const validQuizzes = history.filter(q => q.totalQuestions && q.totalQuestions > 0);
-      const avgScore = validQuizzes.length > 0
-        ? Math.round(validQuizzes.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0) / validQuizzes.length)
-        : 0;
-      return {
-        name: `${user.firstName} ${user.lastName}`,
-        avgScore,
-        totalTests: validQuizzes.length
+  const getLeaderboard = async () => {
+    try {
+      const allUserData = [];
+      const processedEmails = new Set();
+      
+      // STEP 1: Fetch all users from Firestore collection
+      const fetchFirestoreUsers = async () => {
+        try {
+          const usersCollectionRef = collection(db, 'users');
+          const usersSnapshot = await getDocs(usersCollectionRef);
+          
+          // Process each user from Firestore
+          usersSnapshot.forEach(userDoc => {
+            const userData = userDoc.data();
+            const email = userData.email;
+            
+            if (email && !processedEmails.has(email)) {
+              processedEmails.add(email);
+              
+              // Add to userProfiles for later processing
+              processUserQuizData(email, {
+                name: `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || email.split('@')[0],
+                email: email,
+                uid: userDoc.id
+              });
+            }
+          });
+        } catch (err) {
+          console.error("Error fetching Firestore users:", err);
+        }
       };
-    });
-    return leaderboard.sort((a, b) => b.avgScore - a.avgScore).slice(0, 5);
+      
+      // STEP 2: Also get users from local storage as fallback
+      const processLocalUsers = () => {
+        const users = getUsers();
+        users.forEach(user => {
+          const email = user.email;
+          if (email && !processedEmails.has(email)) {
+            processedEmails.add(email);
+            processUserQuizData(email, {
+              name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || email.split('@')[0],
+              email: email
+            });
+          }
+        });
+      };
+      
+      // STEP 3: Process quiz data for a specific user
+      const processUserQuizData = (email, profile) => {
+        // Get user's quiz history
+        const userHistoryKey = `quizHistory_${email}`;
+        const history = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
+        
+        // Filter for valid quizzes that have totalQuestions
+        const validQuizzes = history.filter(q => q.totalQuestions && q.totalQuestions > 0);
+        
+        if (validQuizzes.length > 0) {
+          // Calculate average score
+          const avgScore = Math.round(validQuizzes.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0) / validQuizzes.length);
+          
+          // Get highest score
+          const highestScore = Math.max(...validQuizzes.map(quiz => Math.round((quiz.score / quiz.totalQuestions) * 100)));
+          
+          // Include the current user information
+          const currentUser = getCurrentUser();
+          const isCurrentUser = currentUser && email === currentUser.email;
+          
+          // Determine level based on score
+          let level = "Beginner";
+          if (avgScore >= 80) level = "Expert";
+          else if (avgScore >= 60) level = "Advanced";
+          else if (avgScore >= 40) level = "Intermediate";
+          
+          allUserData.push({
+            name: profile.name,
+            email: email,
+            avgScore,
+            highestScore,
+            totalTests: validQuizzes.length,
+            level,
+            isCurrentUser,
+            lastActivityDate: validQuizzes[validQuizzes.length - 1].date // most recent quiz date
+          });
+        }
+      };
+      
+      // STEP 4: Process current Firebase user if available
+      const processCurrentFirebaseUser = () => {
+        if (firebaseUser && !processedEmails.has(firebaseUser.email)) {
+          processedEmails.add(firebaseUser.email);
+          processUserQuizData(firebaseUser.email, {
+            name: profile ? 
+              `${profile.firstName || ''} ${profile.lastName || ''}`.trim() : 
+              firebaseUser.displayName || firebaseUser.email.split('@')[0],
+            email: firebaseUser.email,
+            uid: firebaseUser.uid
+          });
+        }
+      };
+      
+      // Execute all the steps
+      await fetchFirestoreUsers();
+      processLocalUsers();
+      processCurrentFirebaseUser();
+      
+      // Sort by average score (highest first) and take top 5
+      return allUserData
+        .sort((a, b) => b.avgScore - a.avgScore || b.highestScore - a.highestScore)
+        .slice(0, 5);
+    } catch (error) {
+      console.error("Error generating leaderboard:", error);
+      return [];
+    }
   };
 
-  const leaderboardData = getLeaderboard();
+  // Initialize leaderboard
+  const [leaderboardData, setLeaderboardData] = useState([]);
+  
+  // Load leaderboard data
+  useEffect(() => {
+    const loadLeaderboard = async () => {
+      const data = await getLeaderboard();
+      setLeaderboardData(data);
+    };
+    
+    loadLeaderboard();
+  }, [firebaseUser, profile]);
 
   // When user answers, only update answers in localStorage
   const handleAnswerSubmit = (difficulty) => {
     if (!dailyChallenge.userAnswers[difficulty]) {
       const today = new Date().toDateString();
-      const userKey = firebaseUser?.email || 'guest';
-      const answersKey = `dailyChallengeAnswers_${userKey}_${today}`;
+      
+      // Only save for logged in users
+      if (!firebaseUser) return;
+      
+      const userEmail = firebaseUser.email;
+      const answersKey = `dailyChallengeAnswers_${userEmail}_${today}`;
       const newUserAnswers = {
         ...dailyChallenge.userAnswers,
         [difficulty]: selectedAnswer
@@ -464,9 +603,10 @@ const Home = ({ darkMode, toggleTheme }) => {
         ...prev,
         userAnswers: newUserAnswers
       }));
-      // ... rest of the answer logic ...
+      
+      // Save score to user history if correct
       if (selectedAnswer === dailyChallenge.questions[difficulty].correctAnswer) {
-        const userHistoryKey = `quizHistory_${firebaseUser?.email}`;
+        const userHistoryKey = `quizHistory_${userEmail}`;
         const history = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
         history.push({
           score: 100,
@@ -487,13 +627,55 @@ const Home = ({ darkMode, toggleTheme }) => {
   useEffect(() => {
     if (firebaseUser) {
       const fetchProfile = async () => {
-        const docRef = doc(db, 'users', firebaseUser.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setProfile(docSnap.data());
+        try {
+          const docRef = doc(db, 'users', firebaseUser.uid);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            const userData = docSnap.data();
+            setProfile(userData);
+            
+            // Store current user in localStorage to ensure consistency
+            const currentUserData = {
+              firstName: userData.firstName || firebaseUser.displayName?.split(' ')[0] || 'User',
+              lastName: userData.lastName || firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+              email: firebaseUser.email,
+              uid: firebaseUser.uid
+            };
+            
+            localStorage.setItem('currentUser', JSON.stringify(currentUserData));
+          } else {
+            // If user document doesn't exist, create it based on auth data
+            const newUserData = {
+              firstName: firebaseUser.displayName?.split(' ')[0] || 'User',
+              lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+              email: firebaseUser.email,
+              createdAt: new Date().toISOString()
+            };
+            
+            await setDoc(doc(db, 'users', firebaseUser.uid), newUserData);
+            setProfile(newUserData);
+            
+            // Also save to localStorage
+            localStorage.setItem('currentUser', JSON.stringify({
+              ...newUserData,
+              uid: firebaseUser.uid
+            }));
+          }
+        } catch (error) {
+          console.error("Error fetching user profile:", error);
         }
       };
+      
       fetchProfile();
+      
+      // Get quiz history for this specific user
+      const historyKey = `quizHistory_${firebaseUser.email}`;
+      const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+      setQuizHistory(history);
+      calculateProfileStats(history);
+      calculateAchievements(history);
+      calculateCategoryBreakdown(history);
     }
   }, [firebaseUser]);
 
@@ -544,8 +726,10 @@ const Home = ({ darkMode, toggleTheme }) => {
   }, [firebaseUser]);
 
   useEffect(() => {
-    updateDailyChallenge();
-  }, []);
+    if (firebaseUser) {
+      updateDailyChallenge();
+    }
+  }, [firebaseUser]);
 
   const calculateProfileStats = (history) => {
     const validQuizzes = history.filter(q => q.totalQuestions && q.totalQuestions > 0);
@@ -610,6 +794,27 @@ const Home = ({ darkMode, toggleTheme }) => {
     setCategoryBreakdown(breakdown);
   };
 
+  // Get user name for display
+  const getUserDisplayName = () => {
+    if (profile && profile.firstName) {
+      return `${profile.firstName} ${profile.lastName || ''}`;
+    }
+    
+    if (firebaseUser) {
+      if (firebaseUser.displayName) {
+        return firebaseUser.displayName;
+      }
+      return firebaseUser.email.split('@')[0];
+    }
+    
+    const currentUser = getCurrentUser();
+    if (currentUser && currentUser.firstName) {
+      return `${currentUser.firstName} ${currentUser.lastName || ''}`;
+    }
+    
+    return 'User';
+  };
+
   return (
     <Box sx={{ 
       flexGrow: 1,
@@ -660,30 +865,53 @@ const Home = ({ darkMode, toggleTheme }) => {
             Career Launch Pad
           </Typography>
           <IconButton 
-            color="inherit" 
+            color={darkMode ? "inherit" : "primary"} 
             onClick={toggleTheme} 
-            sx={{ mr: 1 }}
+            sx={{ 
+              mr: 1,
+              bgcolor: darkMode ? 'transparent' : 'rgba(25, 118, 210, 0.08)',
+              '&:hover': {
+                bgcolor: darkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(25, 118, 210, 0.12)',
+              }
+            }}
           >
-            {darkMode ? <LightModeIcon /> : <DarkModeIcon />}
+            {darkMode ? <LightModeIcon /> : <DarkModeIcon sx={{ color: '#1976d2' }} />}
           </IconButton>
           <Tooltip title="Profile">
             <IconButton 
-              color="inherit" 
+              color={darkMode ? "inherit" : "primary"}
               onClick={handleProfileClick} 
               sx={{ mr: 1 }}
               aria-controls={open ? 'profile-menu' : undefined}
               aria-haspopup="true"
               aria-expanded={open ? 'true' : undefined}
             >
-              <Avatar sx={{ 
-                width: 40, 
-                height: 40,
-                background: `linear-gradient(45deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
-                color: 'white',
-                fontWeight: 'bold'
-              }}>
-                {getInitials()}
-              </Avatar>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Avatar 
+                  onClick={handleProfileClick}
+                  sx={{ 
+                    cursor: 'pointer',
+                    bgcolor: darkMode ? 'primary.main' : '#1976d2',
+                    color: '#fff',
+                    '&:hover': {
+                      bgcolor: darkMode ? 'primary.dark' : '#1565c0',
+                    }
+                  }}
+                >
+                  {getInitials()}
+                </Avatar>
+                <Typography 
+                  variant="subtitle1" 
+                  sx={{ 
+                    ml: 1, 
+                    display: { xs: 'none', md: 'block' },
+                    fontWeight: 'medium',
+                    color: darkMode ? 'inherit' : '#1976d2'
+                  }}
+                >
+                  {getUserDisplayName()}
+                </Typography>
+              </Box>
             </IconButton>
           </Tooltip>
           <Menu
@@ -738,10 +966,10 @@ const Home = ({ darkMode, toggleTheme }) => {
                     </Avatar>
                     <Box>
                       <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                        {profile.firstName} {profile.lastName}
+                        {getUserDisplayName()}
                       </Typography>
                       <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                        {profile.email}
+                        {profile?.email || getCurrentUser()?.email}
                       </Typography>
                     </Box>
                   </Stack>
@@ -874,21 +1102,164 @@ const Home = ({ darkMode, toggleTheme }) => {
                   </Typography>
                 </Paper>
                 {/* Leaderboard */}
-                <Paper elevation={0} sx={{ p: 3, borderRadius: 4, border: '1px solid', borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)' }}>
+                <Paper 
+                  elevation={0} 
+                  sx={{ 
+                    p: 3, 
+                    borderRadius: 4, 
+                    border: '1px solid', 
+                    borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                    position: 'relative',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <Box 
+                    sx={{ 
+                      position: 'absolute', 
+                      top: 0, 
+                      right: 0, 
+                      width: '120px', 
+                      height: '120px', 
+                      opacity: 0.05,
+                      transform: 'translate(30%, -30%)'
+                    }}
+                  >
+                    <EmojiEventsIcon sx={{ width: '100%', height: '100%' }} />
+                  </Box>
+                  
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
-                    <EqualizerIcon sx={{ mr: 1, color: theme.palette.secondary.main }} />
+                    <EmojiEventsIcon sx={{ mr: 1, color: theme.palette.secondary.main }} />
                     Leaderboard
                   </Typography>
-                  <List dense>
-                    {leaderboardData.map((user, idx) => (
-                      <ListItem key={user.name}>
-                        <ListItemIcon>
-                          <Avatar sx={{ bgcolor: idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? '#cd7f32' : theme.palette.primary.main, color: 'black', width: 32, height: 32, fontWeight: 'bold' }}>{idx + 1}</Avatar>
-                        </ListItemIcon>
-                        <ListItemText primary={user.name} secondary={`Avg Score: ${user.avgScore}% | Tests: ${user.totalTests}`} />
-                      </ListItem>
-                    ))}
-                  </List>
+                  
+                  {leaderboardData.length === 0 ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', py: 2 }}>
+                      <CircularProgress size={24} sx={{ mb: 1 }} />
+                      <Typography variant="body2" color="text.secondary">
+                        Loading leaderboard data...
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <>
+                      <List dense>
+                        {leaderboardData.map((user, idx) => (
+                          <ListItem 
+                            key={user.email} 
+                            sx={{ 
+                              mb: 1,
+                              p: 1.5,
+                              backgroundColor: user.isCurrentUser 
+                                ? (darkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(25, 118, 210, 0.08)') 
+                                : (darkMode ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)'),
+                              borderRadius: '8px',
+                              border: user.isCurrentUser ? '1px solid' : 'none',
+                              borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(25, 118, 210, 0.2)',
+                              transition: 'transform 0.2s ease',
+                              '&:hover': {
+                                transform: 'translateY(-2px)',
+                                backgroundColor: user.isCurrentUser 
+                                  ? (darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(25, 118, 210, 0.12)') 
+                                  : (darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)')
+                              }
+                            }}
+                          >
+                            <ListItemIcon>
+                              <Avatar 
+                                sx={{ 
+                                  bgcolor: 
+                                    idx === 0 ? '#FFD700' : // Gold
+                                    idx === 1 ? '#C0C0C0' : // Silver
+                                    idx === 2 ? '#CD7F32' : // Bronze
+                                    theme.palette.primary.main,
+                                  color: idx < 3 ? '#000' : '#fff',
+                                  width: 36, 
+                                  height: 36, 
+                                  fontWeight: 'bold',
+                                  border: idx < 3 ? '2px solid' : 'none',
+                                  borderColor: 
+                                    idx === 0 ? '#FFB900' : 
+                                    idx === 1 ? '#A9A9A9' : 
+                                    '#B87333',
+                                  boxShadow: idx < 3 ? '0 2px 4px rgba(0,0,0,0.2)' : 'none'
+                                }}
+                              >
+                                {idx + 1}
+                              </Avatar>
+                            </ListItemIcon>
+                            <ListItemText 
+                              primary={
+                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                  <Typography 
+                                    variant="body1" 
+                                    sx={{ 
+                                      fontWeight: user.isCurrentUser ? 'bold' : 'medium',
+                                      color: user.isCurrentUser ? 'primary.main' : 'inherit'
+                                    }}
+                                  >
+                                    {user.name}
+                                  </Typography>
+                                  {user.isCurrentUser && (
+                                    <Chip 
+                                      label="You" 
+                                      size="small" 
+                                      color="primary" 
+                                      variant="outlined"
+                                      sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
+                                    />
+                                  )}
+                                  {idx === 0 && (
+                                    <Typography component="span" sx={{ ml: 1, color: '#FFD700', display: 'flex', alignItems: 'center' }}>
+                                      <EmojiEventsIcon fontSize="small" />
+                                    </Typography>
+                                  )}
+                                </Box>
+                              }
+                              secondary={
+                                <Stack direction="row" spacing={1} sx={{ mt: 0.5 }} flexWrap="wrap">
+                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                    <Typography variant="caption" sx={{ color: theme.palette.secondary.main, fontWeight: 'bold' }}>
+                                      {user.avgScore}%
+                                    </Typography>
+                                  </Box>
+                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                    <Typography variant="caption">
+                                      {user.totalTests} tests
+                                    </Typography>
+                                  </Box>
+                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                    <Chip 
+                                      label={user.level} 
+                                      size="small"
+                                      sx={{ 
+                                        height: 18, 
+                                        fontSize: '0.65rem',
+                                        backgroundColor: 
+                                          user.level === 'Expert' ? '#4caf50' : 
+                                          user.level === 'Advanced' ? '#ff9800' : 
+                                          user.level === 'Intermediate' ? '#2196f3' : 
+                                          '#9e9e9e',
+                                        color: '#fff'
+                                      }}
+                                    />
+                                  </Box>
+                                </Stack>
+                              }
+                            />
+                          </ListItem>
+                        ))}
+                      </List>
+                      
+                      <Button 
+                        variant="text" 
+                        size="small" 
+                        onClick={navigateToHistory}
+                        endIcon={<ArrowForwardIcon fontSize="small" />}
+                        sx={{ mt: 1, fontSize: '0.85rem' }}
+                      >
+                        View full history
+                      </Button>
+                    </>
+                  )}
                 </Paper>
               </Stack>
             </Grid>
@@ -992,8 +1363,6 @@ const Home = ({ darkMode, toggleTheme }) => {
                       '&:hover': {
                         transform: 'translateY(-5px)',
                         boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
-                        bgcolor: darkMode ? 'rgba(255, 255, 255, 0.1)' : theme.palette.primary.light,
-                        color: darkMode ? 'white' : theme.palette.primary.contrastText,
                       }
                     }}>
                       <Typography 
