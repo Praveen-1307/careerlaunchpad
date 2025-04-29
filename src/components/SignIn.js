@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
   Avatar,
@@ -15,13 +15,11 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  CircularProgress,
 } from '@mui/material';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { useAuthState } from 'react-firebase-hooks/auth';
 
 const SignIn = () => {
   const [email, setEmail] = useState('');
@@ -32,15 +30,7 @@ const SignIn = () => {
   const [resetError, setResetError] = useState('');
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const [user] = useAuthState(auth);
-
-  useEffect(() => {
-    if (user) {
-      navigate('/home');
-    }
-  }, [user, navigate]);
 
   const validateEmail = (email) => {
     if (!email) {
@@ -65,22 +55,20 @@ const SignIn = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
-    setIsLoading(true);
-    
+    // Validate email
+    if (!validateEmail(email)) {
+      return;
+    }
+    // Simple validation
+    if (!email || !password) {
+      setError('Please fill in all fields');
+      return;
+    }
     try {
-      if (!validateEmail(email)) {
-        setIsLoading(false);
-        return;
-      }
-      
-      if (!email || !password) {
-        setError('Please fill in all fields');
-        setIsLoading(false);
-        return;
-      }
-
+      console.log('Attempting sign in with:', email);
       await signInWithEmailAndPassword(auth, email, password);
-      // Navigation will be handled by the useEffect hook
+      console.log('Signed in, navigating to /home');
+      navigate('/home');
     } catch (error) {
       console.error('Sign in error:', error);
       if (error.code === 'auth/user-not-found') {
@@ -92,29 +80,22 @@ const SignIn = () => {
       } else {
         setError(error.message || 'Invalid credentials');
       }
-      setIsLoading(false);
     }
   };
 
   const handleForgotPassword = async () => {
     setResetError('');
     setResetEmailSent(false);
-    setIsLoading(true);
-    
     const emailRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
     if (!emailRegex.test(resetEmail)) {
       setResetError('Please enter a valid email address');
-      setIsLoading(false);
       return;
     }
-    
     try {
       await sendPasswordResetEmail(auth, resetEmail);
       setResetEmailSent(true);
     } catch (error) {
       setResetError(error.message || 'Failed to send reset email');
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -145,9 +126,8 @@ const SignIn = () => {
             value={email}
             onChange={handleEmailChange}
             error={!!emailError}
-            helperText={emailError}
+            helperText={emailError || "Enter a valid email address"}
             placeholder="your@email.com"
-            disabled={isLoading}
           />
           <TextField
             margin="normal"
@@ -160,40 +140,33 @@ const SignIn = () => {
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            disabled={isLoading}
           />
           <Button
             type="submit"
             fullWidth
             variant="contained"
             sx={{ mt: 3, mb: 2 }}
-            disabled={isLoading}
           >
-            {isLoading ? <CircularProgress size={24} /> : 'Sign In'}
+            Sign In
           </Button>
           <Grid container justifyContent="center">
             <Grid item>
-              <Link component={RouterLink} to="/signup" variant="body2" disabled={isLoading}>
+              <Link component={RouterLink} to="/signup" variant="body2">
                 {"Don't have an account? Sign Up"}
               </Link>
             </Grid>
           </Grid>
           <Grid container justifyContent="center" sx={{ mt: 1 }}>
             <Grid item>
-              <Link 
-                component="button" 
-                variant="body2" 
-                onClick={() => setShowResetDialog(true)}
-                disabled={isLoading}
-              >
+              <Link component="button" variant="body2" onClick={() => setShowResetDialog(true)}>
                 Forgot password?
               </Link>
             </Grid>
           </Grid>
         </Box>
       </Paper>
-      
-      <Dialog open={showResetDialog} onClose={() => !isLoading && setShowResetDialog(false)}>
+      {/* Forgot Password Dialog */}
+      <Dialog open={showResetDialog} onClose={() => setShowResetDialog(false)}>
         <DialogTitle>Reset Password</DialogTitle>
         <DialogContent>
           <TextField
@@ -207,22 +180,13 @@ const SignIn = () => {
             value={resetEmail}
             onChange={e => setResetEmail(e.target.value)}
             placeholder="your@email.com"
-            disabled={isLoading}
           />
           {resetError && <Typography color="error" sx={{ mt: 1 }}>{resetError}</Typography>}
           {resetEmailSent && <Typography color="success.main" sx={{ mt: 1 }}>Password reset email sent!</Typography>}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowResetDialog(false)} disabled={isLoading}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleForgotPassword} 
-            variant="contained"
-            disabled={isLoading}
-          >
-            {isLoading ? <CircularProgress size={24} /> : 'Send Reset Email'}
-          </Button>
+          <Button onClick={() => setShowResetDialog(false)}>Cancel</Button>
+          <Button onClick={handleForgotPassword} variant="contained">Send Reset Email</Button>
         </DialogActions>
       </Dialog>
     </Container>

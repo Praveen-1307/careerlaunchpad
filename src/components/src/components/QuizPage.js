@@ -144,10 +144,6 @@ const QuizPage = ({ darkMode }) => {
     );
   }
   
-  if (typeof window !== "undefined") {
-    // safe to use localStorage
-  }
-  
   return (
     <Box sx={{ flexGrow: 1 }}>
       <AppBar position="static">

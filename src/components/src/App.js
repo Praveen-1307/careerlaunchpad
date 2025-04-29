@@ -11,6 +11,7 @@ import ScoreHistory from './components/ScoreHistory';
 import AllUsersScoreHistory from './components/AllUsersScoreHistory';
 import UserList from './components/UserList';
 import PrivateRoute from './components/PrivateRoute';
+import { isAuthenticated } from './utils/auth';
 import EditProfile from './components/EditProfile';
 import './App.css';
 
@@ -30,8 +31,8 @@ function App() {
       <CssBaseline />
       <div className="App">
         <Routes>
-          <Route path="/signin" element={<SignIn />} />
-          <Route path="/signup" element={<SignUp />} />
+          <Route path="/signin" element={isAuthenticated() ? <Navigate to="/home" /> : <SignIn />} />
+          <Route path="/signup" element={isAuthenticated() ? <Navigate to="/home" /> : <SignUp />} />
           
           <Route path="/home" element={
             <PrivateRoute>

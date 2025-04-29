@@ -46,52 +46,40 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 import EqualizerIcon from '@mui/icons-material/Equalizer';
 import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 import TimelineIcon from '@mui/icons-material/Timeline';
+import FormatQuoteIcon from '@mui/icons-material/FormatQuote';
 import BookIcon from '@mui/icons-material/Book';
 import PeopleIcon from '@mui/icons-material/People';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import DescriptionIcon from '@mui/icons-material/Description';
-import { logoutUser, getUsers } from '../utils/auth';
-import { useAuthState } from 'react-firebase-hooks/auth';
-import { auth } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import { logoutUser, getCurrentUser, getActiveUsers } from '../utils/auth';
 
 const Home = ({ darkMode, toggleTheme }) => {
   const navigate = useNavigate();
+  const [user, setUser] = useState(null);
   const [quizHistory, setQuizHistory] = useState([]);
   const [activeUsers, setActiveUsers] = useState([]);
   const [dailyChallenge, setDailyChallenge] = useState({
     topic: "Time and Work",
-    questions: {
-      easy: null,
-      medium: null,
-      hard: null
-    },
-    lastUpdated: null,
-    userAnswers: {
-      easy: null,
-      medium: null,
-      hard: null
-    }
+    question: null,
+    lastUpdated: null
   });
   const [selectedAnswer, setSelectedAnswer] = useState('');
   const [showAnswer, setShowAnswer] = useState(false);
   const [hasAttempted, setHasAttempted] = useState(false);
   const [anchorEl, setAnchorEl] = useState(null);
-  const [profileStats, setProfileStats] = useState({
-    totalQuizzes: 0,
-    averageScore: 0,
-    bestScore: 0,
-    totalTimeSpent: 0,
-    topicsMastered: 0
-  });
-  const [achievements, setAchievements] = useState([]);
-  const [categoryBreakdown, setCategoryBreakdown] = useState({});
   const open = Boolean(anchorEl);
   const theme = useTheme();
-  const [firebaseUser] = useAuthState(auth);
-  const [profile, setProfile] = useState(null);
   
+  // Add mock leaderboard data
+  const leaderboardData = [
+    { rank: 1, name: "Alex Johnson", score: 95, level: "Expert" },
+    { rank: 2, name: "Sarah Williams", score: 92, level: "Expert" },
+    { rank: 3, name: "Michael Brown", score: 88, level: "Advanced" },
+    { rank: 4, name: "Emma Davis", score: 85, level: "Advanced" },
+    { rank: 5, name: "James Wilson", score: 82, level: "Advanced" }
+  ];
+
   // Add study resources
   const studyResources = [
     { title: "Basic Mathematics", link: "#", icon: <BookIcon /> },
@@ -109,7 +97,7 @@ const Home = ({ darkMode, toggleTheme }) => {
   ];
   
   // Function to get a random question from a topic
-  const getRandomQuestion = (topic, difficulty) => {
+  const getRandomQuestion = (topic) => {
     const questions = {
       "Time and Work": {
         easy: [
@@ -270,49 +258,59 @@ const Home = ({ darkMode, toggleTheme }) => {
     };
 
     const topicQuestions = questions[topic] || {};
-    const questionsOfDifficulty = topicQuestions[difficulty] || [];
-    return questionsOfDifficulty[Math.floor(Math.random() * questionsOfDifficulty.length)];
+    const difficulties = ['easy', 'medium', 'hard'];
+    const randomDifficulty = difficulties[Math.floor(Math.random() * difficulties.length)];
+    const questionsOfDifficulty = topicQuestions[randomDifficulty] || [];
+    return {
+      ...questionsOfDifficulty[Math.floor(Math.random() * questionsOfDifficulty.length)],
+      difficulty: randomDifficulty
+    };
   };
 
-  // UpdateDailyChallenge: persist daily challenge for the day
+  // Function to update daily challenge
   const updateDailyChallenge = () => {
     const today = new Date().toDateString();
-    const userKey = firebaseUser?.email || 'guest';
-    const challengeKey = `dailyChallenge_${userKey}_${today}`;
-    const answersKey = `dailyChallengeAnswers_${userKey}_${today}`;
-
-    // Try to load challenge from localStorage
-    const savedChallenge = JSON.parse(localStorage.getItem(challengeKey) || 'null');
-    const savedAnswers = JSON.parse(localStorage.getItem(answersKey) || '{"easy": null, "medium": null, "hard": null}');
-
-    if (savedChallenge && savedChallenge.questions) {
+    const topics = ["Time and Work", "Time and Distance", "Percentage"];
+    const randomTopic = topics[Math.floor(Math.random() * topics.length)];
+    
+    if (dailyChallenge.lastUpdated !== today) {
+      const newQuestion = getRandomQuestion(randomTopic);
       setDailyChallenge({
-        ...savedChallenge,
-        userAnswers: savedAnswers
-      });
-    } else {
-      // Generate new challenge for today
-      const topics = ["Time and Work", "Time and Distance", "Percentage", "Average", "Ratio and Proportions", "Profit and Loss"];
-      const randomTopic = topics[Math.floor(Math.random() * topics.length)];
-      const newQuestions = {
-        easy: getRandomQuestion(randomTopic, 'easy'),
-        medium: getRandomQuestion(randomTopic, 'medium'),
-        hard: getRandomQuestion(randomTopic, 'hard')
-      };
-      const newChallenge = {
         topic: randomTopic,
-        questions: newQuestions,
+        question: newQuestion,
         lastUpdated: today
-      };
-      localStorage.setItem(challengeKey, JSON.stringify(newChallenge));
-      localStorage.setItem(answersKey, JSON.stringify({ easy: null, medium: null, hard: null }));
-      setDailyChallenge({
-        ...newChallenge,
-        userAnswers: { easy: null, medium: null, hard: null }
       });
     }
   };
 
+  useEffect(() => {
+    // Get current user
+    const currentUser = getCurrentUser();
+    if (currentUser) {
+      setUser(currentUser);
+      
+      // Get user-specific quiz history using the user's email
+      const userHistoryKey = `quizHistory_${currentUser.email}`;
+      const history = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
+      setQuizHistory(history);
+
+      // Get active users from localStorage
+      const activeUsersData = getActiveUsers();
+      setActiveUsers(activeUsersData);
+
+      // Check if user has already attempted today's challenge
+      const today = new Date().toDateString();
+      const dailyChallengeKey = `dailyChallenge_${currentUser.email}_${today}`;
+      const hasAttemptedToday = localStorage.getItem(dailyChallengeKey) === 'true';
+      setHasAttempted(hasAttemptedToday);
+
+      // Update daily challenge
+      updateDailyChallenge();
+    } else {
+      navigate('/signin');
+    }
+  }, [navigate]);
+  
   const handleProfileClick = (event) => {
     setAnchorEl(event.currentTarget);
   };
@@ -344,16 +342,15 @@ const Home = ({ darkMode, toggleTheme }) => {
   
   // Get user initials for avatar
   const getInitials = () => {
-    if (!profile) return '';
-    return `${profile.firstName.charAt(0)}${profile.lastName.charAt(0)}`;
+    if (!user) return '';
+    return `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`;
   };
   
   // Calculate average score
   const calculateAverage = () => {
     if (!quizHistory || quizHistory.length === 0) return 0;
-    const validQuizzes = quizHistory.filter(q => q.totalQuestions && q.totalQuestions > 0);
-    const sum = validQuizzes.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0);
-    return Math.round(sum / validQuizzes.length) || 0;
+    const sum = quizHistory.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0);
+    return Math.round(sum / quizHistory.length) || 0;
   };
   
   // Get user skill level based on average score
@@ -428,51 +425,59 @@ const Home = ({ darkMode, toggleTheme }) => {
     to { opacity: 1; transform: translateY(0); }
   `;
   
-  // Leaderboard calculation based on real users
-  const getLeaderboard = () => {
-    const users = getUsers();
-    const leaderboard = users.map(user => {
-      const userHistoryKey = `quizHistory_${user.email}`;
-      const history = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
-      const validQuizzes = history.filter(q => q.totalQuestions && q.totalQuestions > 0);
-      const avgScore = validQuizzes.length > 0
-        ? Math.round(validQuizzes.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0) / validQuizzes.length)
-        : 0;
-      return {
-        name: `${user.firstName} ${user.lastName}`,
-        avgScore,
-        totalTests: validQuizzes.length
-      };
+  // Calculate leaderboard data from active users' quiz history
+  const calculateLeaderboard = () => {
+    const userScores = {};
+    
+    // Process only active users' quiz history
+    activeUsers.forEach(activeUser => {
+      const userHistoryKey = `quizHistory_${activeUser.email}`;
+      const userHistory = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
+      
+      if (userHistory.length > 0) {
+        const totalScore = userHistory.reduce((sum, quiz) => sum + (quiz.score || 0), 0);
+        const averageScore = Math.round(totalScore / userHistory.length);
+        
+        userScores[activeUser.email] = {
+          name: activeUser.name || activeUser.email.split('@')[0],
+          score: averageScore,
+          attempts: userHistory.length,
+          level: averageScore >= 80 ? "Expert" : 
+                 averageScore >= 60 ? "Advanced" : 
+                 averageScore >= 40 ? "Intermediate" : "Beginner"
+        };
+      }
     });
-    return leaderboard.sort((a, b) => b.avgScore - a.avgScore).slice(0, 5);
+
+    // Convert to array and sort by score
+    return Object.values(userScores)
+      .sort((a, b) => b.score - a.score)
+      .map((user, index) => ({
+        rank: index + 1,
+        name: user.name,
+        score: user.score,
+        level: user.level
+      }));
   };
 
-  const leaderboardData = getLeaderboard();
-
-  // When user answers, only update answers in localStorage
-  const handleAnswerSubmit = (difficulty) => {
-    if (!dailyChallenge.userAnswers[difficulty]) {
+  const handleAnswerSubmit = () => {
+    if (!hasAttempted) {
+      setShowAnswer(true);
+      setHasAttempted(true);
+      
+      // Store that user has attempted today's challenge
       const today = new Date().toDateString();
-      const userKey = firebaseUser?.email || 'guest';
-      const answersKey = `dailyChallengeAnswers_${userKey}_${today}`;
-      const newUserAnswers = {
-        ...dailyChallenge.userAnswers,
-        [difficulty]: selectedAnswer
-      };
-      localStorage.setItem(answersKey, JSON.stringify(newUserAnswers));
-      setDailyChallenge(prev => ({
-        ...prev,
-        userAnswers: newUserAnswers
-      }));
-      // ... rest of the answer logic ...
-      if (selectedAnswer === dailyChallenge.questions[difficulty].correctAnswer) {
-        const userHistoryKey = `quizHistory_${firebaseUser?.email}`;
+      const dailyChallengeKey = `dailyChallenge_${user.email}_${today}`;
+      localStorage.setItem(dailyChallengeKey, 'true');
+
+      // Update user's score in the leaderboard
+      if (selectedAnswer === dailyChallenge.question.correctAnswer) {
+        const userHistoryKey = `quizHistory_${user.email}`;
         const history = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
         history.push({
           score: 100,
           date: new Date().toISOString(),
-          topic: dailyChallenge.topic,
-          difficulty: difficulty
+          topic: dailyChallenge.topic
         });
         localStorage.setItem(userHistoryKey, JSON.stringify(history));
         setQuizHistory(history);
@@ -482,132 +487,7 @@ const Home = ({ darkMode, toggleTheme }) => {
 
   const handleAnswerChange = (event) => {
     setSelectedAnswer(event.target.value);
-  };
-
-  useEffect(() => {
-    if (firebaseUser) {
-      const fetchProfile = async () => {
-        const docRef = doc(db, 'users', firebaseUser.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setProfile(docSnap.data());
-        }
-      };
-      fetchProfile();
-    }
-  }, [firebaseUser]);
-
-  useEffect(() => {
-    if (quizHistory && quizHistory.length > 0) {
-      // Use the same logic as ScoreHistory
-      const validQuizzes = quizHistory.filter(q => q.totalQuestions && q.totalQuestions > 0);
-      const totalQuizzes = validQuizzes.length;
-      const averageScore = totalQuizzes > 0
-        ? Math.round(validQuizzes.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0) / totalQuizzes)
-        : 0;
-      const bestScore = totalQuizzes > 0
-        ? Math.max(...validQuizzes.map(quiz => Math.round((quiz.score / quiz.totalQuestions) * 100)))
-        : 0;
-      const totalTimeSpent = validQuizzes.reduce((total, quiz) => total + (quiz.timeSpent || 0), 0);
-      const topicsMastered = aptitudeTopics.filter(topic => {
-        const topicQuizzes = quizHistory.filter(q => q.topic === topic);
-        return topicQuizzes.length > 0 && 
-               topicQuizzes.every(q => ((q.score / (q.totalQuestions || 1)) * 100) >= 70);
-      }).length;
-      setProfileStats({
-        totalQuizzes,
-        averageScore,
-        bestScore,
-        totalTimeSpent,
-        topicsMastered
-      });
-    } else {
-      setProfileStats({
-        totalQuizzes: 0,
-        averageScore: 0,
-        bestScore: 0,
-        totalTimeSpent: 0,
-        topicsMastered: 0
-      });
-    }
-  }, [quizHistory, aptitudeTopics]);
-
-  useEffect(() => {
-    if (firebaseUser) {
-      const historyKey = `quizHistory_${firebaseUser.email}`;
-      const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
-      setQuizHistory(history);
-      calculateProfileStats(history);
-      calculateAchievements(history);
-      calculateCategoryBreakdown(history);
-    }
-  }, [firebaseUser]);
-
-  useEffect(() => {
-    updateDailyChallenge();
-  }, []);
-
-  const calculateProfileStats = (history) => {
-    const validQuizzes = history.filter(q => q.totalQuestions && q.totalQuestions > 0);
-    const totalQuizzes = validQuizzes.length;
-    const totalTimeSpent = validQuizzes.reduce((total, quiz) => total + (quiz.timeSpent || 0), 0);
-    const averageScore = totalQuizzes > 0 
-      ? Math.round(validQuizzes.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0) / totalQuizzes)
-      : 0;
-    const bestScore = totalQuizzes > 0
-      ? Math.max(...validQuizzes.map(quiz => Math.round((quiz.score / quiz.totalQuestions) * 100)))
-      : 0;
-    const topicsMastered = Object.keys(categoryBreakdown).filter(
-      category => categoryBreakdown[category].correct / categoryBreakdown[category].total >= 0.8
-    ).length;
-
-    setProfileStats({
-      totalQuizzes,
-      averageScore,
-      bestScore,
-      totalTimeSpent,
-      topicsMastered
-    });
-  };
-
-  const calculateAchievements = (history) => {
-    const newAchievements = [];
-    const totalQuizzes = history.length;
-    const validQuizzes = history.filter(q => q.totalQuestions && q.totalQuestions > 0);
-    const highestScore = validQuizzes.length > 0
-      ? Math.max(...validQuizzes.map(quiz => Math.round((quiz.score / quiz.totalQuestions) * 100)))
-      : 0;
-    const averageScore = validQuizzes.length > 0
-      ? Math.round(validQuizzes.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0) / validQuizzes.length)
-      : 0;
-
-    if (totalQuizzes >= 5) newAchievements.push({ name: 'Quiz Enthusiast', icon: '🏆' });
-    if (totalQuizzes >= 10) newAchievements.push({ name: 'Quiz Master', icon: '👑' });
-    if (highestScore >= 90) newAchievements.push({ name: 'Perfectionist', icon: '💯' });
-    if (averageScore >= 80) newAchievements.push({ name: 'Consistent Performer', icon: '📈' });
-    if (history.some(q => q.score === q.totalQuestions)) newAchievements.push({ name: 'Perfect Score', icon: '⭐' });
-    if (profileStats.topicsMastered >= 3) newAchievements.push({ name: 'Topic Master', icon: '🎯' });
-
-    setAchievements(newAchievements);
-  };
-
-  const calculateCategoryBreakdown = (history) => {
-    const breakdown = {};
-    history.forEach(quiz => {
-      if (!quiz.totalQuestions || quiz.totalQuestions === 0) return;
-      const category = quiz.category || 'General';
-      if (!breakdown[category]) {
-        breakdown[category] = {
-          total: 0,
-          correct: 0,
-          count: 0
-        };
-      }
-      breakdown[category].total += quiz.totalQuestions;
-      breakdown[category].correct += quiz.score;
-      breakdown[category].count += 1;
-    });
-    setCategoryBreakdown(breakdown);
+    setShowAnswer(false);
   };
 
   return (
@@ -718,7 +598,7 @@ const Home = ({ darkMode, toggleTheme }) => {
             transformOrigin={{ horizontal: 'right', vertical: 'top' }}
             anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
           >
-            {profile && (
+            {user && (
               <>
                 <Box sx={{ 
                   p: 2, 
@@ -738,10 +618,10 @@ const Home = ({ darkMode, toggleTheme }) => {
                     </Avatar>
                     <Box>
                       <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                        {profile.firstName} {profile.lastName}
+                        {user.firstName} {user.lastName}
                       </Typography>
                       <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                        {profile.email}
+                        {user.email}
                       </Typography>
                     </Box>
                   </Stack>
@@ -797,102 +677,334 @@ const Home = ({ darkMode, toggleTheme }) => {
       </AppBar>
 
       <Container maxWidth="lg" sx={{ pt: 6, pb: 8 }}>
-        {/* Top Banner: Welcome + Achievements */}
-        {profile && (
-          <Grid container spacing={3} sx={{ mb: 4 }}>
-            {/* Left: Welcome and Practice Info */}
-            <Grid item xs={12} md={8}>
-              <Paper elevation={0} sx={{ p: 3, borderRadius: 4, border: '1px solid', borderColor: darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', height: '100%' }}>
-                <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold' }}>
-                  Welcome back, {profile.firstName?.toUpperCase()}!
-                </Typography>
-                <Typography variant="h6" sx={{ mb: 2, opacity: 0.8 }}>
-                  Ready to boost your aptitude skills today?
-                </Typography>
-                <Box sx={{ mb: 2 }}>
-                  <Chip 
-                    icon={<TipsAndUpdatesIcon />} 
-                    label={getStudyRecommendation()}
-                    color="primary" 
-                    variant="outlined"
-                    sx={{ borderRadius: 2, py: 1.5 }}
-                  />
+        {/* Welcome Banner */}
+        {user && (
+          <Paper 
+            elevation={0} 
+            sx={{ 
+              p: 3, 
+              mb: 4, 
+              borderRadius: 4,
+              border: '1px solid',
+              borderColor: darkMode 
+                ? 'rgba(255, 255, 255, 0.1)' 
+                : 'rgba(0, 0, 0, 0.05)',
+              animation: `${fadeIn} 0.6s ease-out`,
+              transform: 'translateZ(0)',
+              transition: 'all 0.3s',
+              '&:hover': {
+                boxShadow: darkMode 
+                  ? '0 8px 30px rgba(0, 0, 0, 0.3)' 
+                  : '0 8px 30px rgba(0, 0, 0, 0.1)',
+                transform: 'translateY(-5px)',
+              }
+            }}
+          >
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={6}>
+                <Box>
+                  <Typography 
+                    variant="h4" 
+                    gutterBottom 
+                    sx={{ 
+                      fontWeight: 'bold',
+                      animation: `${fadeIn} 0.8s ease-out`,
+                    }}
+                  >
+                    Welcome back, {user.firstName}!
+                  </Typography>
+                  <Typography 
+                    variant="h6" 
+                    sx={{ 
+                      mb: 2, 
+                      opacity: 0.8,
+                      animation: `${fadeIn} 1s ease-out`,
+                    }}
+                  >
+                    Ready to boost your aptitude skills today?
+                  </Typography>
+                  
+                  {quizHistory.length > 0 ? (
+                    <Box sx={{ mb: 2, animation: `${fadeIn} 1.2s ease-out` }}>
+                      <Chip 
+                        icon={<TipsAndUpdatesIcon />} 
+                        label={getStudyRecommendation()}
+                        color="primary" 
+                        variant="outlined"
+                        sx={{ borderRadius: 2, py: 1.5 }}
+                      />
+                    </Box>
+                  ) : (
+                    <Typography 
+                      variant="body1" 
+                      sx={{ 
+                        mb: 2,
+                        animation: `${fadeIn} 1.2s ease-out`,
+                      }}
+                    >
+                      Take your first quiz to start tracking your progress!
+                    </Typography>
+                  )}
+                  
+                  <Button 
+                    variant="contained" 
+                    size="large"
+                    startIcon={<SchoolIcon />}
+                    onClick={startQuiz}
+                    sx={{ 
+                      px: 4, 
+                      py: 1.5,
+                      borderRadius: 28,
+                      background: `linear-gradient(45deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+                      boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
+                      animation: `${fadeIn} 1.4s ease-out`,
+                      position: 'relative',
+                      overflow: 'hidden',
+                      '&:hover': {
+                        boxShadow: '0 12px 20px rgba(0, 0, 0, 0.2)',
+                        transform: 'translateY(-3px)',
+                      }
+                    }}
+                  >
+                    Start New Test
+                  </Button>
+                  
+                  <Box sx={{ 
+                    mt: 4, 
+                    p: 2, 
+                    borderLeft: '4px solid', 
+                    borderColor: theme.palette.primary.main, 
+                    bgcolor: 'rgba(0,0,0,0.02)', 
+                    borderRadius: '0 8px 8px 0',
+                    animation: `${fadeIn} 1.6s ease-out`
+                  }}>
+                    <Typography variant="h6" sx={{ fontWeight: 'bold', color: theme.palette.primary.main, mb: 1 }}>
+                      Why Practice Matters
+                    </Typography>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                      Regular practice of aptitude questions can improve your:
+                    </Typography>
+                    <Grid container spacing={2}>
+                      <Grid item xs={6}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          mb: 1,
+                          animation: `${fadeIn} 1.8s ease-out`
+                        }}>
+                          <CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} />
+                          <Typography variant="body2">Problem-solving speed</Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          mb: 1,
+                          animation: `${fadeIn} 1.9s ease-out`
+                        }}>
+                          <CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} />
+                          <Typography variant="body2">Pattern recognition</Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          mb: 1,
+                          animation: `${fadeIn} 2s ease-out`
+                        }}>
+                          <CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} />
+                          <Typography variant="body2">Mental calculation</Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          mb: 1,
+                          animation: `${fadeIn} 2.1s ease-out`
+                        }}>
+                          <CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} />
+                          <Typography variant="body2">Time management</Typography>
+                        </Box>
+                      </Grid>
+                    </Grid>
+                    <Typography 
+                      variant="body2" 
+                      sx={{ 
+                        mt: 2, 
+                        fontStyle: 'italic', 
+                        opacity: 0.7,
+                        animation: `${fadeIn} 2.2s ease-out`
+                      }}
+                    >
+                      Students who practice regularly are 3x more likely to succeed in placement aptitude tests.
+                    </Typography>
+                  </Box>
                 </Box>
-                <Button 
-                  variant="contained" 
-                  size="large"
-                  startIcon={<SchoolIcon />}
-                  onClick={startQuiz}
-                  sx={{ 
-                    px: 4, 
-                    py: 1.5,
-                    borderRadius: 28,
-                    background: 'linear-gradient(90deg, #a445b2 0%, #fa4299 100%)',
-                    boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
-                    fontWeight: 'bold',
-                    fontSize: '1.1rem',
-                    letterSpacing: 1,
+              </Grid>
+              
+              <Grid item xs={12} md={6}>
+                <Box sx={{ 
+                  height: '100%', 
+                  display: 'flex', 
+                  flexDirection: 'column',
+                  justifyContent: 'center', 
+                  alignItems: 'center'
+                }}>
+                  <Card elevation={0} sx={{ 
+                    width: '100%',
+                    borderRadius: 4,
+                    overflow: 'visible',
+                    background: darkMode 
+                      ? 'linear-gradient(135deg, rgba(66, 66, 120, 0.5), rgba(26, 26, 46, 0.5))' 
+                      : 'linear-gradient(135deg, rgba(245, 247, 250, 0.9), rgba(228, 232, 239, 0.9))',
+                    border: '1px solid',
+                    borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                    animation: `${fadeIn} 1s ease-out`,
+                    transform: 'translateZ(0)',
+                    transition: 'all 0.5s ease',
                     '&:hover': {
-                      boxShadow: '0 12px 20px rgba(0, 0, 0, 0.2)',
-                      transform: 'translateY(-3px)',
-                      background: 'linear-gradient(90deg, #fa4299 0%, #a445b2 100%)',
+                      transform: 'translateY(-5px)',
+                      boxShadow: '0 20px 40px rgba(0, 0, 0, 0.1)',
                     }
-                  }}
-                >
-                  START NEW TEST
-                </Button>
-                <Box sx={{ mt: 4, p: 2, borderLeft: '4px solid', borderColor: theme.palette.primary.main, bgcolor: 'rgba(0,0,0,0.02)', borderRadius: '0 8px 8px 0' }}>
-                  <Typography variant="h6" sx={{ fontWeight: 'bold', color: theme.palette.primary.main, mb: 1 }}>
-                    Why Practice Matters
-                  </Typography>
-                  <Typography variant="body2" sx={{ mb: 2 }}>
-                    Regular practice of aptitude questions can improve your:
-                  </Typography>
-                  <Grid container spacing={2}>
-                    <Grid item xs={6}><Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}><CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} /><Typography variant="body2">Problem-solving speed</Typography></Box></Grid>
-                    <Grid item xs={6}><Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}><CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} /><Typography variant="body2">Pattern recognition</Typography></Box></Grid>
-                    <Grid item xs={6}><Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}><CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} /><Typography variant="body2">Mental calculation</Typography></Box></Grid>
-                    <Grid item xs={6}><Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}><CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} /><Typography variant="body2">Time management</Typography></Box></Grid>
-                  </Grid>
-                  <Typography variant="body2" sx={{ mt: 2, fontStyle: 'italic', opacity: 0.7 }}>
-                    Students who practice regularly are 3x more likely to succeed in placement aptitude tests.
-                  </Typography>
+                  }}>
+                    <CardContent>
+                      {quizHistory.length > 0 ? (
+                        <Box sx={{ textAlign: 'center' }}>
+                          <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <MilitaryTechIcon sx={{ mr: 1, color: userLevel.color }} />
+                            Your Achievements
+                          </Typography>
+                          
+                          <Box sx={{ 
+                            display: 'flex', 
+                            justifyContent: 'center', 
+                            alignItems: 'center', 
+                            mb: 2,
+                            position: 'relative' 
+                          }}>
+                            <Box sx={{ 
+                              position: 'relative', 
+                              width: 120, 
+                              height: 120,
+                              display: 'flex',
+                              justifyContent: 'center',
+                              alignItems: 'center',
+                              borderRadius: '50%',
+                              background: darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                              border: '1px solid',
+                              borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                              mb: 2
+                            }}>
+                              <Typography variant="h3" sx={{ 
+                                fontWeight: 'bold',
+                                color: userLevel.color
+                              }}>
+                                {calculateAverage()}%
+                              </Typography>
+                            </Box>
+                          </Box>
+                          
+                          <Typography 
+                            variant="body1" 
+                            sx={{ 
+                              fontWeight: 'bold', 
+                              mb: 1,
+                              animation: `${fadeIn} 1.4s ease-out` 
+                            }}
+                          >
+                            {userLevel.level} Level
+                          </Typography>
+                          
+                          <Typography 
+                            variant="body2" 
+                            sx={{ 
+                              mb: 2, 
+                              opacity: 0.8,
+                              animation: `${fadeIn} 1.5s ease-out`
+                            }}
+                          >
+                            Completed {quizHistory.length} test{quizHistory.length !== 1 ? 's' : ''}
+                          </Typography>
+                          
+                          <Chip 
+                            icon={<CheckCircleIcon />} 
+                            label={quizHistory.length >= 5 ? "Regular Tester" : "Taking Progress Steps"} 
+                            color={quizHistory.length >= 5 ? "success" : "primary"}
+                            variant="outlined"
+                            size="small"
+                            sx={{ mb: 1, borderRadius: 2 }}
+                          />
+                        </Box>
+                      ) : (
+                        <Box sx={{ textAlign: 'center', p: 2 }}>
+                          <Typography 
+                            variant="h6" 
+                            sx={{ 
+                              fontWeight: 'bold', 
+                              mb: 2,
+                              animation: `${fadeIn} 1.2s ease-out`
+                            }}
+                          >
+                            Begin Your Journey
+                          </Typography>
+                          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                            <AutoModeIcon sx={{ fontSize: 60, color: theme.palette.primary.main, opacity: 0.7 }} />
+                          </Box>
+                          <Typography 
+                            variant="body2" 
+                            sx={{ 
+                              opacity: 0.8,
+                              animation: `${fadeIn} 1.4s ease-out`
+                            }}
+                          >
+                            Complete your first aptitude test to unlock statistics and personalized recommendations
+                          </Typography>
+                        </Box>
+                      )}
+                    </CardContent>
+                  </Card>
+                  
+                  <Card elevation={0} sx={{ 
+                    width: '100%',
+                    mt: 2,
+                    borderRadius: 4,
+                    background: darkMode 
+                      ? 'linear-gradient(135deg, rgba(66, 66, 120, 0.5), rgba(26, 26, 46, 0.5))' 
+                      : 'linear-gradient(135deg, rgba(245, 247, 250, 0.9), rgba(228, 232, 239, 0.9))',
+                    border: '1px solid',
+                    borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                    animation: `${fadeIn} 1.2s ease-out`,
+                    transform: 'translateZ(0)',
+                    transition: 'all 0.5s ease',
+                    '&:hover': {
+                      transform: 'translateY(-5px)',
+                      boxShadow: '0 20px 40px rgba(0, 0, 0, 0.1)',
+                    }
+                  }}>
+                    <CardContent>
+                      <Typography variant="h6" sx={{ 
+                        fontWeight: 'bold', 
+                        mb: 1, 
+                        display: 'flex', 
+                        alignItems: 'center' 
+                      }}>
+                        <AssessmentIcon sx={{ mr: 1, color: theme.palette.secondary.main }} />
+                        Next Goal
+                      </Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.8 }}>
+                        {quizHistory.length > 0 
+                          ? `Improve your average score to ${Math.min(calculateAverage() + 10, 100)}%` 
+                          : "Complete your first test to set goals"}
+                      </Typography>
+                    </CardContent>
+                  </Card>
                 </Box>
-              </Paper>
+              </Grid>
             </Grid>
-            {/* Right: Upcoming Placement Drives, Daily Aptitude Tip, Leaderboard */}
-            <Grid item xs={12} md={4}>
-              <Stack spacing={3} sx={{ animation: `${fadeIn} 1.8s ease-out` }}>
-                {/* Daily Aptitude Tip */}
-                <Paper elevation={0} sx={{ p: 3, borderRadius: 4, border: '1px solid', borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)' }}>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
-                    <TipsAndUpdatesIcon sx={{ mr: 1, color: theme.palette.warning.main }} />
-                    Daily Aptitude Tip
-                  </Typography>
-                  <Typography variant="body1" sx={{ mt: 2, fontStyle: 'italic' }}>
-                    {quotes[new Date().getDate() % quotes.length]}
-                  </Typography>
-                </Paper>
-                {/* Leaderboard */}
-                <Paper elevation={0} sx={{ p: 3, borderRadius: 4, border: '1px solid', borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)' }}>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
-                    <EqualizerIcon sx={{ mr: 1, color: theme.palette.secondary.main }} />
-                    Leaderboard
-                  </Typography>
-                  <List dense>
-                    {leaderboardData.map((user, idx) => (
-                      <ListItem key={user.name}>
-                        <ListItemIcon>
-                          <Avatar sx={{ bgcolor: idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? '#cd7f32' : theme.palette.primary.main, color: 'black', width: 32, height: 32, fontWeight: 'bold' }}>{idx + 1}</Avatar>
-                        </ListItemIcon>
-                        <ListItemText primary={user.name} secondary={`Avg Score: ${user.avgScore}% | Tests: ${user.totalTests}`} />
-                      </ListItem>
-                    ))}
-                  </List>
-                </Paper>
-              </Stack>
-            </Grid>
-          </Grid>
+          </Paper>
         )}
 
         {/* Main Content Grid */}
@@ -1367,88 +1479,84 @@ const Home = ({ darkMode, toggleTheme }) => {
           </Box>
           
           <Grid container spacing={3}>
-            {['easy', 'medium', 'hard'].map((difficulty) => (
-              <Grid item xs={12} sm={4} key={difficulty}>
-                <Card sx={{ 
-                  height: '100%',
-                  borderRadius: 3,
-                  bgcolor: darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.5)',
-                  border: '1px solid',
-                  borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
-                }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom sx={{ 
-                      textTransform: 'capitalize',
-                      color: difficulty === 'easy' ? 'success.main' : 
-                             difficulty === 'medium' ? 'warning.main' : 'error.main'
-                    }}>
-                      {difficulty} Challenge
-                    </Typography>
-                    {dailyChallenge.questions[difficulty] ? (
-                      <>
-                        <Typography variant="body1" sx={{ mb: 2, fontWeight: 'medium' }}>
-                          {dailyChallenge.questions[difficulty].question}
-                        </Typography>
-                        {!dailyChallenge.userAnswers[difficulty] ? (
-                          <>
-                            <RadioGroup
-                              value={selectedAnswer}
-                              onChange={handleAnswerChange}
-                            >
-                              {dailyChallenge.questions[difficulty].options.map((option, index) => (
-                                <FormControlLabel
-                                  key={index}
-                                  value={option}
-                                  control={<Radio />}
-                                  label={option}
-                                  sx={{ mb: 1 }}
-                                />
-                              ))}
-                            </RadioGroup>
-                            <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <Button 
-                                variant="contained" 
-                                color={difficulty === 'easy' ? 'success' : 
-                                       difficulty === 'medium' ? 'warning' : 'error'}
-                                onClick={() => handleAnswerSubmit(difficulty)}
-                                disabled={!selectedAnswer}
-                                sx={{ borderRadius: 2 }}
-                              >
-                                Submit Answer
-                              </Button>
-                            </Box>
-                          </>
-                        ) : (
-                          <Box sx={{ mt: 2 }}>
-                            <Typography 
-                              variant="body1" 
-                              sx={{ 
-                                color: dailyChallenge.userAnswers[difficulty] === dailyChallenge.questions[difficulty].correctAnswer 
-                                  ? 'success.main' 
-                                  : 'error.main',
-                                fontWeight: 'bold',
-                                mb: 2
-                              }}
-                            >
-                              {dailyChallenge.userAnswers[difficulty] === dailyChallenge.questions[difficulty].correctAnswer 
-                                ? 'Correct! Well done!' 
-                                : `Incorrect. The correct answer is: ${dailyChallenge.questions[difficulty].correctAnswer}`}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              You've already attempted this challenge. Come back tomorrow for new challenges!
-                            </Typography>
-                          </Box>
-                        )}
-                      </>
-                    ) : (
-                      <Typography variant="body1" color="text.secondary">
-                        Loading challenge...
+            <Grid item xs={12}>
+              <Card sx={{ 
+                height: '100%',
+                borderRadius: 3,
+                bgcolor: darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.5)',
+                border: '1px solid',
+                borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+              }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Today's Challenge
+                  </Typography>
+                  <Typography variant="body1" sx={{ mb: 2 }}>
+                    Topic: {dailyChallenge.topic}
+                  </Typography>
+                  {dailyChallenge.question ? (
+                    <>
+                      <Typography variant="body1" sx={{ mb: 2, fontWeight: 'medium' }}>
+                        {dailyChallenge.question.question}
                       </Typography>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-            ))}
+                      {!hasAttempted ? (
+                        <>
+                          <RadioGroup
+                            value={selectedAnswer}
+                            onChange={handleAnswerChange}
+                          >
+                            {dailyChallenge.question.options.map((option, index) => (
+                              <FormControlLabel
+                                key={index}
+                                value={option}
+                                control={<Radio />}
+                                label={option}
+                                sx={{ mb: 1 }}
+                              />
+                            ))}
+                          </RadioGroup>
+                          <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <Button 
+                              variant="contained" 
+                              color="primary"
+                              onClick={handleAnswerSubmit}
+                              disabled={!selectedAnswer}
+                              sx={{ borderRadius: 2 }}
+                            >
+                              Submit Answer
+                            </Button>
+                          </Box>
+                        </>
+                      ) : (
+                        <Box sx={{ mt: 2 }}>
+                          <Typography 
+                            variant="body1" 
+                            sx={{ 
+                              color: selectedAnswer === dailyChallenge.question.correctAnswer 
+                                ? 'success.main' 
+                                : 'error.main',
+                              fontWeight: 'bold',
+                              mb: 2
+                            }}
+                          >
+                            {selectedAnswer === dailyChallenge.question.correctAnswer 
+                              ? 'Correct! Well done!' 
+                              : `Incorrect. The correct answer is: ${dailyChallenge.question.correctAnswer}`}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            You've already attempted today's challenge. Come back tomorrow for a new challenge!
+                          </Typography>
+                        </Box>
+                      )}
+                    </>
+                  ) : (
+                    <Typography variant="body1" color="text.secondary">
+                      Loading today's challenge...
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+            </Grid>
           </Grid>
         </Paper>
       </Container>
