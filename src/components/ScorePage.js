@@ -179,7 +179,9 @@ const ScorePage = ({ darkMode }) => {
                   width: 32, 
                   height: 32, 
                   bgcolor: darkMode ? 'primary.dark' : 'primary.light',
-                  color: 'white'
+                  color: 'white',
+                  border: '2px solid #3f51b5',
+                  boxShadow: '0 0 0 2px #2196f3, 0 0 10px rgba(0,0,0,0.3)'
                 }}>
                   {getInitials()}
                 </Avatar>
@@ -257,7 +259,7 @@ const ScorePage = ({ darkMode }) => {
               <Box sx={{ 
                 display: 'flex', 
                 alignItems: 'center',
-                bgcolor: darkMode ? 'transparent' : 'rgba(25, 118, 210, 0.08)',
+                bgcolor: 'rgba(25, 118, 210, 0.8)',
                 borderRadius: 2,
                 px: 1.5,
                 py: 0.5
@@ -267,7 +269,7 @@ const ScorePage = ({ darkMode }) => {
                   sx={{ 
                     mr: 1, 
                     display: { xs: 'none', sm: 'block' },
-                    color: darkMode ? 'inherit' : 'primary.main',
+                    color: '#ffffff',
                     fontWeight: 'medium'
                   }}
                 >
@@ -278,7 +280,9 @@ const ScorePage = ({ darkMode }) => {
                   height: 32, 
                   bgcolor: darkMode ? 'primary.dark' : 'primary.main',
                   color: 'white',
-                  fontWeight: 'bold'
+                  fontWeight: 'bold',
+                  border: '2px solid #3f51b5',
+                  boxShadow: '0 0 0 2px #2196f3, 0 0 10px rgba(0,0,0,0.3)'
                 }}>
                   {getInitials()}
                 </Avatar>

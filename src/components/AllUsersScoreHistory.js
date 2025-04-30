@@ -138,6 +138,7 @@ const AllUsersScoreHistory = ({ darkMode }) => {
                   <TableHead>
                     <TableRow>
                       <TableCell>Date</TableCell>
+                      <TableCell>Category</TableCell>
                       <TableCell>Score</TableCell>
                       <TableCell>Total Questions</TableCell>
                       <TableCell>Percentage</TableCell>
@@ -147,6 +148,7 @@ const AllUsersScoreHistory = ({ darkMode }) => {
                     {userScores[user.email]?.map((quiz, index) => (
                       <TableRow key={index}>
                         <TableCell>{formatDate(quiz.date)}</TableCell>
+                        <TableCell>{quiz.category || 'General'}</TableCell>
                         <TableCell>{quiz.score}</TableCell>
                         <TableCell>{quiz.totalQuestions}</TableCell>
                         <TableCell>
@@ -158,7 +160,7 @@ const AllUsersScoreHistory = ({ darkMode }) => {
                     ))}
                     {(!userScores[user.email] || userScores[user.email].length === 0) && (
                       <TableRow>
-                        <TableCell colSpan={4} align="center">
+                        <TableCell colSpan={5} align="center">
                           No quiz attempts yet
                         </TableCell>
                       </TableRow>

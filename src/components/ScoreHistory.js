@@ -138,7 +138,10 @@ const ScoreHistory = ({ darkMode }) => {
     const breakdown = {};
     history.forEach(quiz => {
       if (!quiz.totalQuestions || quiz.totalQuestions === 0) return;
+      
+      // Use the saved category name directly
       const category = quiz.category || 'General';
+      
       if (!breakdown[category]) {
         breakdown[category] = {
           total: 0,
@@ -146,10 +149,12 @@ const ScoreHistory = ({ darkMode }) => {
           count: 0
         };
       }
+      
       breakdown[category].total += quiz.totalQuestions;
       breakdown[category].correct += quiz.score;
       breakdown[category].count += 1;
     });
+    
     setCategoryBreakdown(breakdown);
   };
 
@@ -240,6 +245,12 @@ const ScoreHistory = ({ darkMode }) => {
   };
 
   const getCategoryColor = (category) => {
+    // First check if it's one of our special quiz types
+    if (category?.startsWith('Topic Quiz (')) return 'secondary';
+    if (category === 'Timed Quiz') return 'warning';
+    if (category === 'Standard Quiz') return 'primary';
+    
+    // Fall back to the original category colors
     const colors = {
       'Mathematics': 'primary',
       'Science': 'success',
@@ -252,6 +263,12 @@ const ScoreHistory = ({ darkMode }) => {
   };
 
   const getCategoryIcon = (category) => {
+    // First check if it's one of our special quiz types
+    if (category?.startsWith('Topic Quiz (')) return '📚';
+    if (category === 'Timed Quiz') return '⏱️';
+    if (category === 'Standard Quiz') return '📝';
+    
+    // Fall back to the original category icons
     const icons = {
       'Mathematics': '🧮',
       'Science': '🔬',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -22,16 +22,21 @@ import {
   LinearProgress,
   Avatar,
   Tooltip,
+  Chip,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { getRandomQuestions } from '../data/questionBank';
+import TimerIcon from '@mui/icons-material/Timer';
+import CategoryIcon from '@mui/icons-material/Category';
+import { getRandomQuestions, getTopicQuestions, questionBank } from '../data/questionBank';
 import { getCurrentUser } from '../utils/auth';
 import { auth, db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
 const QuizPage = ({ darkMode }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [questions, setQuestions] = useState([]);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState({});
@@ -39,6 +44,65 @@ const QuizPage = ({ darkMode }) => {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [answeredQuestions, setAnsweredQuestions] = useState(new Set());
+  const [quizType, setQuizType] = useState('standard');
+  const [selectedTopic, setSelectedTopic] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [timerActive, setTimerActive] = useState(false);
+  const [questionCount, setQuestionCount] = useState(10); // Default to 10 questions
+  
+  useEffect(() => {
+    // Check if any specific quiz parameters were passed
+    if (location.state) {
+      if (location.state.selectedTopic) {
+        setQuizType('topic');
+        setSelectedTopic(location.state.selectedTopic);
+      } else if (location.state.timed) {
+        setQuizType('timed');
+        // Set 10 minutes (600 seconds) for timed quiz with 10 questions
+        setTimeLeft(600);
+        setTimerActive(true);
+      } else if (location.state.category) {
+        // Handle custom category like "General Quiz"
+        setQuizType('standard');
+        // Store the category name for later use in quizResult
+        localStorage.setItem('customCategory', location.state.category);
+      }
+      
+      // Set question count if provided
+      if (location.state.questionCount) {
+        setQuestionCount(location.state.questionCount);
+      }
+    }
+    
+    // Cleanup function to remove customCategory when component unmounts
+    return () => {
+      localStorage.removeItem('customCategory');
+    };
+  }, [location.state]);
+  
+  // Timer effect
+  useEffect(() => {
+    let timer;
+    if (timerActive && timeLeft > 0) {
+      timer = setInterval(() => {
+        setTimeLeft(prevTime => prevTime - 1);
+      }, 1000);
+    } else if (timerActive && timeLeft === 0) {
+      // Time's up - submit the quiz
+      handleSubmit();
+    }
+    
+    return () => {
+      clearInterval(timer);
+    };
+  }, [timerActive, timeLeft]);
+  
+  // Format timer display
+  const formatTime = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
+  };
   
   useEffect(() => {
     const fetchUserData = async () => {
@@ -104,8 +168,47 @@ const QuizPage = ({ darkMode }) => {
         console.log("Quiz initialized with user:", userData);
         setUser(userData);
         
-        // Load random questions for this user
-        const fetchedQuestions = getRandomQuestions(30, userData);
+        // Load questions based on quiz type
+        let fetchedQuestions = [];
+        
+        try {
+          if (quizType === 'topic' && selectedTopic) {
+            // Get questions for specific topic
+            fetchedQuestions = getTopicQuestions(selectedTopic, questionCount, userData);
+            console.log(`Loaded ${fetchedQuestions.length} ${selectedTopic} questions`);
+          } else if (quizType === 'timed') {
+            // For timed quiz
+            fetchedQuestions = getRandomQuestions(questionCount, userData);
+            console.log(`Loaded ${fetchedQuestions.length} questions for timed quiz`);
+          } else {
+            // Standard quiz
+            fetchedQuestions = getRandomQuestions(questionCount, userData);
+            console.log(`Loaded ${fetchedQuestions.length} questions for standard quiz`);
+          }
+        } catch (error) {
+          console.error("Error loading questions:", error);
+          // Fallback to standard questions
+          fetchedQuestions = getRandomQuestions(questionCount, userData);
+          
+          if (quizType === 'topic') {
+            // Reset to standard quiz if topic quiz fails
+            setQuizType('standard');
+            setSelectedTopic(null);
+          } else if (quizType === 'timed' && timeLeft) {
+            // Keep timed mode but with standard question count
+            console.log("Using standard question set for timed quiz");
+          }
+        }
+        
+        if (fetchedQuestions.length === 0) {
+          console.warn("No questions fetched, using backup questions");
+          // Use a set of backup questions
+          fetchedQuestions = questionBank[0].questions.slice(0, questionCount).map(q => ({
+            ...q,
+            category: questionBank[0].category
+          }));
+        }
+        
         console.log("Fetched questions:", fetchedQuestions.length);
         setQuestions(fetchedQuestions);
         setLoading(false);
@@ -116,7 +219,7 @@ const QuizPage = ({ darkMode }) => {
     };
     
     initializeQuiz();
-  }, [navigate]);
+  }, [navigate, quizType, selectedTopic, questionCount]);
   
   // Get user initials for avatar
   const getInitials = () => {
@@ -126,6 +229,11 @@ const QuizPage = ({ darkMode }) => {
   
   // Memoize handleSubmit to avoid dependency warning
   const handleSubmit = useCallback(() => {
+    // Stop timer if active
+    if (timerActive) {
+      setTimerActive(false);
+    }
+    
     // Calculate score
     let score = 0;
     questions.forEach((question, index) => {
@@ -139,12 +247,17 @@ const QuizPage = ({ darkMode }) => {
       date: new Date().toISOString(),
       score,
       totalQuestions: questions.length,
-      category: questions[0]?.category || 'General',
+      category: quizType === 'topic' ? `Topic Quiz (${selectedTopic})` : 
+               quizType === 'timed' ? 'Timed Quiz' : 
+               localStorage.getItem('customCategory') || 'Standard Quiz',
+      quizType: quizType,
+      timeSpent: quizType === 'timed' ? 600 - timeLeft : null,
       questions: questions.map((q, index) => ({
         question: q.question,
         correctAnswer: q.correctAnswer,
         userAnswer: answers[index] || 'No answer',
-        correct: answers[index] === q.correctAnswer
+        correct: answers[index] === q.correctAnswer,
+        category: q.category || 'General'
       }))
     };
     
@@ -168,7 +281,7 @@ const QuizPage = ({ darkMode }) => {
         user: user // Pass along the user data to ensure consistency
       } 
     });
-  }, [questions, answers, navigate, user]);
+  }, [questions, answers, navigate, user, quizType, selectedTopic, timerActive, timeLeft]);
   
   const handleAnswerChange = (e) => {
     setAnswers({
@@ -229,9 +342,32 @@ const QuizPage = ({ darkMode }) => {
             <ArrowBackIcon />
           </IconButton>
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-            Career Launch Pad - Aptitude Test
+            Career Launch Pad - {quizType === 'topic' ? `${selectedTopic} Quiz` : 
+                               quizType === 'timed' ? 'Timed Quiz' : 
+                               localStorage.getItem('customCategory') || 'Standard Quiz'}
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            {quizType === 'timed' && timeLeft !== null && (
+              <Chip 
+                icon={<TimerIcon />} 
+                label={formatTime(timeLeft)}
+                color={timeLeft < 60 ? "error" : timeLeft < 180 ? "warning" : "primary"}
+                sx={{ 
+                  mr: 2, 
+                  fontWeight: 'bold',
+                  fontSize: '1rem',
+                  padding: '4px'
+                }} 
+              />
+            )}
+            {quizType === 'topic' && (
+              <Chip 
+                icon={<CategoryIcon />} 
+                label={selectedTopic}
+                color="secondary"
+                sx={{ mr: 2 }} 
+              />
+            )}
             <HelpOutlineIcon sx={{ mr: 1, color: darkMode ? 'inherit' : 'primary.main' }} />
             <Typography variant="subtitle1" sx={{ mr: 2, color: darkMode ? 'inherit' : 'text.primary', fontWeight: 'medium' }}>
               Questions: {Object.keys(answers).length}/{questions.length}
@@ -240,7 +376,7 @@ const QuizPage = ({ darkMode }) => {
               <Box sx={{ 
                 display: 'flex', 
                 alignItems: 'center',
-                bgcolor: darkMode ? 'transparent' : 'rgba(25, 118, 210, 0.08)',
+                bgcolor: 'rgba(25, 118, 210, 0.8)',
                 borderRadius: 2,
                 px: 1.5,
                 py: 0.5
@@ -250,7 +386,7 @@ const QuizPage = ({ darkMode }) => {
                   sx={{ 
                     mr: 1, 
                     display: { xs: 'none', sm: 'block' },
-                    color: darkMode ? 'inherit' : 'primary.main',
+                    color: '#ffffff',
                     fontWeight: 'medium'
                   }}
                 >
@@ -262,7 +398,9 @@ const QuizPage = ({ darkMode }) => {
                     height: 32, 
                     bgcolor: darkMode ? 'primary.dark' : 'primary.main',
                     color: 'white',
-                    fontWeight: 'bold'
+                    fontWeight: 'bold',
+                    border: '2px solid #3f51b5',
+                    boxShadow: '0 0 0 2px #2196f3, 0 0 10px rgba(0,0,0,0.3)'
                   }}>
                     {getInitials()}
                   </Avatar>
@@ -280,8 +418,30 @@ const QuizPage = ({ darkMode }) => {
           boxShadow: 3
         }}>
           <Box sx={{ mb: 2 }}>
+            {/* Calculate current page and total pages based on 10 questions per page */}
+            {(() => {
+              const questionsPerPage = 10;
+              const currentPage = Math.floor(currentQuestion / questionsPerPage);
+              const totalPages = Math.ceil(questions.length / questionsPerPage);
+              const startQuestionNum = currentPage * questionsPerPage + 1;
+              const endQuestionNum = Math.min((currentPage + 1) * questionsPerPage, questions.length);
+              
+              return (
+                <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <Typography variant="body1" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                      Questions {startQuestionNum}-{endQuestionNum}
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                      Page {currentPage + 1} of {totalPages}
+                    </Typography>
+                  </Box>
+                </Box>
+              );
+            })()}
+            
             <Stepper 
-              activeStep={currentQuestion % 10} 
+              activeStep={currentQuestion % 10}
               alternativeLabel
               sx={{
                 '& .MuiStepIcon-root': {
@@ -291,48 +451,73 @@ const QuizPage = ({ darkMode }) => {
                     fontSize: '0.75rem',
                     fontWeight: 'bold'
                   }
-                }
+                },
+                '& .MuiStepConnector-line': {
+                  borderTopWidth: '2px'
+                },
+                p: 2,
+                borderRadius: 1,
+                borderLeft: '4px solid',
+                borderColor: 'primary.main',
+                bgcolor: darkMode ? 'rgba(255, 255, 255, 0.03)' : 'rgba(25, 118, 210, 0.05)'
               }}
             >
-              {Array.from({ length: 10 }, (_, i) => {
-                const questionNumber = Math.floor(currentQuestion / 10) * 10 + i;
-                const isAnswered = answeredQuestions.has(questionNumber);
-                const isPastQuestion = questionNumber < currentQuestion;
+              {(() => {
+                const questionsPerPage = 10;
+                const currentPage = Math.floor(currentQuestion / questionsPerPage);
+                const startIdx = currentPage * questionsPerPage;
+                const endIdx = Math.min(startIdx + questionsPerPage, questions.length);
                 
-                let icon;
-                let color;
-                
-                if (questionNumber >= currentQuestion) {
-                  // Current and future questions
-                  icon = questionNumber + 1;
-                  color = 'inherit';
-                } else if (isAnswered) {
-                  // Answered past questions
-                  icon = '✓';
-                  color = '#4caf50';
-                } else {
-                  // Unanswered past questions
-                  icon = 'X';
-                  color = '#ff0000';
-                }
-                
-                return (
-                  <Step key={i}>
-                    <StepLabel StepIconProps={{
-                      icon: icon,
-                      sx: {
-                        '& .MuiStepIcon-text': {
-                          color: color,
-                          fontWeight: 'bold'
-                        }
-                      }
-                    }} />
-                  </Step>
-                );
-              })}
+                return Array.from({ length: endIdx - startIdx }, (_, i) => {
+                  const questionIdx = startIdx + i;
+                  const questionNumber = questionIdx + 1; // The actual question number (1-based)
+                  const isAnswered = answeredQuestions.has(questionIdx);
+                  const isCurrent = questionIdx === currentQuestion;
+                  const isPastQuestion = questionIdx < currentQuestion;
+                  
+                  let icon;
+                  let color;
+                  
+                  if (isCurrent) {
+                    // Current question
+                    icon = questionNumber;
+                    color = 'inherit';
+                  } else if (isAnswered) {
+                    // Answered questions
+                    icon = '✓';
+                    color = '#4caf50';
+                  } else if (isPastQuestion) {
+                    // Unanswered past questions
+                    icon = 'X';
+                    color = '#ff0000';
+                  } else {
+                    // Future questions
+                    icon = questionNumber;
+                    color = 'inherit';
+                  }
+                  
+                  return (
+                    <Step key={questionIdx}>
+                      <StepLabel 
+                        onClick={() => setCurrentQuestion(questionIdx)}
+                        StepIconProps={{
+                          icon: icon,
+                          sx: {
+                            cursor: 'pointer',
+                            '& .MuiStepIcon-text': {
+                              color: color,
+                              fontWeight: 'bold'
+                            }
+                          }
+                        }} 
+                      />
+                    </Step>
+                  );
+                });
+              })()}
             </Stepper>
             <Typography variant="subtitle1" align="center" sx={{ mt: 1 }}>
-              Questions {Math.floor(currentQuestion / 10) * 10 + 1} to {Math.min(Math.floor(currentQuestion / 10) * 10 + 10, questions.length)} of {questions.length}
+              Question {currentQuestion + 1} of {questions.length}
             </Typography>
             <Box sx={{ mt: 2, mb: 1 }}>
               <LinearProgress variant="determinate" value={calculateProgress()} color="success" />

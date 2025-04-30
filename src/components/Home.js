@@ -29,7 +29,6 @@ import {
   RadioGroup,
   FormControlLabel,
   Radio,
-  CircularProgress,
 } from '@mui/material';
 import { keyframes } from '@mui/system';
 import LightModeIcon from '@mui/icons-material/LightMode';
@@ -52,11 +51,21 @@ import PeopleIcon from '@mui/icons-material/People';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import DescriptionIcon from '@mui/icons-material/Description';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import SpeedDial from '@mui/material/SpeedDial';
+import SpeedDialIcon from '@mui/material/SpeedDialIcon';
+import SpeedDialAction from '@mui/material/SpeedDialAction';
+import QuizIcon from '@mui/icons-material/Quiz';
+import CategoryIcon from '@mui/icons-material/Category';
+import TimerIcon from '@mui/icons-material/Timer';
 import { logoutUser, getUsers, getCurrentUser } from '../utils/auth';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth } from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, getDocs, collection } from 'firebase/firestore';
 import { db } from '../firebase';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
 
 const Home = ({ darkMode, toggleTheme }) => {
   const navigate = useNavigate();
@@ -93,6 +102,8 @@ const Home = ({ darkMode, toggleTheme }) => {
   const theme = useTheme();
   const [firebaseUser] = useAuthState(auth);
   const [profile, setProfile] = useState(null);
+  const [speedDialOpen, setSpeedDialOpen] = useState(false);
+  const [topicDialogOpen, setTopicDialogOpen] = useState(false);
   
   // Add study resources
   const studyResources = [
@@ -335,7 +346,11 @@ const Home = ({ darkMode, toggleTheme }) => {
   };
 
   const startQuiz = () => {
-    navigate('/quiz');
+    navigate('/quiz', { state: { questionCount: 10 } });
+  };
+  
+  const startGeneralQuiz = () => {
+    navigate('/quiz', { state: { questionCount: 30, category: 'General Quiz' } });
   };
   
   const navigateToHistory = () => {
@@ -455,73 +470,58 @@ const Home = ({ darkMode, toggleTheme }) => {
     to { opacity: 1; transform: translateY(0); }
   `;
   
-  // Leaderboard calculation based on real users
+  // Leaderboard calculation based on all users
   const getLeaderboard = async () => {
     try {
-      const allUserData = [];
-      const processedEmails = new Set();
+      // Initialize user profiles map
+      const userProfiles = new Map();
       
-      // STEP 1: Fetch all users from Firestore collection
-      const fetchFirestoreUsers = async () => {
-        try {
-          const usersCollectionRef = collection(db, 'users');
-          const usersSnapshot = await getDocs(usersCollectionRef);
-          
-          // Process each user from Firestore
-          usersSnapshot.forEach(userDoc => {
-            const userData = userDoc.data();
-            const email = userData.email;
-            
-            if (email && !processedEmails.has(email)) {
-              processedEmails.add(email);
-              
-              // Add to userProfiles for later processing
-              processUserQuizData(email, {
-                name: `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || email.split('@')[0],
-                email: email,
-                uid: userDoc.id
-              });
-            }
-          });
-        } catch (err) {
-          console.error("Error fetching Firestore users:", err);
-        }
-      };
+      // 1. First add users from localStorage (backward compatibility)
+      const localUsers = getUsers();
+      localUsers.forEach(user => {
+        userProfiles.set(user.email, {
+          name: `${user.firstName} ${user.lastName}`,
+          email: user.email,
+          source: 'local'
+        });
+      });
       
-      // STEP 2: Also get users from local storage as fallback
-      const processLocalUsers = () => {
-        const users = getUsers();
-        users.forEach(user => {
-          const email = user.email;
-          if (email && !processedEmails.has(email)) {
-            processedEmails.add(email);
-            processUserQuizData(email, {
-              name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || email.split('@')[0],
-              email: email
+      // 2. Add users from Firestore
+      try {
+        const querySnapshot = await getDocs(collection(db, 'users'));
+        querySnapshot.forEach(doc => {
+          const userData = doc.data();
+          if (userData.email) {
+            userProfiles.set(userData.email, {
+              name: `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || userData.email.split('@')[0],
+              email: userData.email,
+              source: 'firestore',
+              uid: doc.id
             });
           }
         });
-      };
+      } catch (error) {
+        console.error("Error fetching Firestore users:", error);
+      }
       
-      // STEP 3: Process quiz data for a specific user
-      const processUserQuizData = (email, profile) => {
-        // Get user's quiz history
+      // Map all user emails to quiz history data
+      const allUserData = [];
+      
+      // Process each unique user
+      for (const [email, profile] of userProfiles.entries()) {
+        // Get user's quiz history from localStorage
         const userHistoryKey = `quizHistory_${email}`;
         const history = JSON.parse(localStorage.getItem(userHistoryKey) || '[]');
         
-        // Filter for valid quizzes that have totalQuestions
+        // Filter for valid quizzes
         const validQuizzes = history.filter(q => q.totalQuestions && q.totalQuestions > 0);
         
         if (validQuizzes.length > 0) {
           // Calculate average score
           const avgScore = Math.round(validQuizzes.reduce((total, quiz) => total + (quiz.score / quiz.totalQuestions) * 100, 0) / validQuizzes.length);
           
-          // Get highest score
-          const highestScore = Math.max(...validQuizzes.map(quiz => Math.round((quiz.score / quiz.totalQuestions) * 100)));
-          
-          // Include the current user information
-          const currentUser = getCurrentUser();
-          const isCurrentUser = currentUser && email === currentUser.email;
+          // Find best score
+          const bestScore = Math.max(...validQuizzes.map(quiz => Math.round((quiz.score / quiz.totalQuestions) * 100)));
           
           // Determine level based on score
           let level = "Beginner";
@@ -529,52 +529,34 @@ const Home = ({ darkMode, toggleTheme }) => {
           else if (avgScore >= 60) level = "Advanced";
           else if (avgScore >= 40) level = "Intermediate";
           
+          // Check if this is the current user
+          const currentUser = getCurrentUser();
+          const isCurrentUser = currentUser && email === currentUser.email;
+          
+          // Add user to leaderboard data
           allUserData.push({
             name: profile.name,
             email: email,
             avgScore,
-            highestScore,
+            bestScore,
             totalTests: validQuizzes.length,
             level,
-            isCurrentUser,
-            lastActivityDate: validQuizzes[validQuizzes.length - 1].date // most recent quiz date
+            isCurrentUser
           });
         }
-      };
+      }
       
-      // STEP 4: Process current Firebase user if available
-      const processCurrentFirebaseUser = () => {
-        if (firebaseUser && !processedEmails.has(firebaseUser.email)) {
-          processedEmails.add(firebaseUser.email);
-          processUserQuizData(firebaseUser.email, {
-            name: profile ? 
-              `${profile.firstName || ''} ${profile.lastName || ''}`.trim() : 
-              firebaseUser.displayName || firebaseUser.email.split('@')[0],
-            email: firebaseUser.email,
-            uid: firebaseUser.uid
-          });
-        }
-      };
-      
-      // Execute all the steps
-      await fetchFirestoreUsers();
-      processLocalUsers();
-      processCurrentFirebaseUser();
-      
-      // Sort by average score (highest first) and take top 5
-      return allUserData
-        .sort((a, b) => b.avgScore - a.avgScore || b.highestScore - a.highestScore)
-        .slice(0, 5);
+      // Sort by average score (descending) and take top 5
+      return allUserData.sort((a, b) => b.avgScore - a.avgScore).slice(0, 5);
     } catch (error) {
       console.error("Error generating leaderboard:", error);
       return [];
     }
   };
-
-  // Initialize leaderboard
-  const [leaderboardData, setLeaderboardData] = useState([]);
   
   // Load leaderboard data
+  const [leaderboardData, setLeaderboardData] = useState([]);
+  
   useEffect(() => {
     const loadLeaderboard = async () => {
       const data = await getLeaderboard();
@@ -582,7 +564,7 @@ const Home = ({ darkMode, toggleTheme }) => {
     };
     
     loadLeaderboard();
-  }, [firebaseUser, profile]);
+  }, []);
 
   // When user answers, only update answers in localStorage
   const handleAnswerSubmit = (difficulty) => {
@@ -814,6 +796,43 @@ const Home = ({ darkMode, toggleTheme }) => {
     
     return 'User';
   };
+
+  const handleSpeedDialOpen = () => {
+    setSpeedDialOpen(true);
+  };
+
+  const handleSpeedDialClose = () => {
+    setSpeedDialOpen(false);
+  };
+  
+  const startTopicQuiz = (topic) => {
+    navigate('/quiz', { state: { selectedTopic: topic, questionCount: 10 } });
+  };
+  
+  const startTimedQuiz = () => {
+    navigate('/quiz', { state: { timed: true, questionCount: 10 } });
+  };
+  
+  const openTopicDialog = () => {
+    setTopicDialogOpen(true);
+    handleSpeedDialClose();
+  };
+  
+  const handleTopicDialogClose = () => {
+    setTopicDialogOpen(false);
+  };
+  
+  const selectTopic = (topic) => {
+    startTopicQuiz(topic);
+    setTopicDialogOpen(false);
+  };
+  
+  const speedDialActions = [
+    { icon: <AssessmentIcon />, name: 'View History', action: navigateToHistory },
+    { icon: <TimerIcon />, name: 'Timed Quiz', action: startTimedQuiz },
+    { icon: <CategoryIcon />, name: 'Topic Quiz', action: openTopicDialog },
+    { icon: <QuizIcon />, name: 'Standard Quiz', action: startQuiz }
+  ];
 
   return (
     <Box sx={{ 
@@ -1050,7 +1069,7 @@ const Home = ({ darkMode, toggleTheme }) => {
                   variant="contained" 
                   size="large"
                   startIcon={<SchoolIcon />}
-                  onClick={startQuiz}
+                  onClick={startGeneralQuiz}
                   sx={{ 
                     px: 4, 
                     py: 1.5,
@@ -1102,164 +1121,172 @@ const Home = ({ darkMode, toggleTheme }) => {
                   </Typography>
                 </Paper>
                 {/* Leaderboard */}
-                <Paper 
-                  elevation={0} 
-                  sx={{ 
-                    p: 3, 
-                    borderRadius: 4, 
-                    border: '1px solid', 
-                    borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
-                    position: 'relative',
-                    overflow: 'hidden'
-                  }}
-                >
-                  <Box 
-                    sx={{ 
-                      position: 'absolute', 
-                      top: 0, 
-                      right: 0, 
-                      width: '120px', 
-                      height: '120px', 
-                      opacity: 0.05,
-                      transform: 'translate(30%, -30%)'
-                    }}
-                  >
-                    <EmojiEventsIcon sx={{ width: '100%', height: '100%' }} />
-                  </Box>
-                  
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
-                    <EmojiEventsIcon sx={{ mr: 1, color: theme.palette.secondary.main }} />
+                <Paper elevation={0} sx={{ p: 3, borderRadius: 4, border: '1px solid', borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)' }}>
+                  <Typography variant="h6" gutterBottom sx={{ 
+                    fontWeight: 'bold', 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    pb: 2
+                  }}>
+                    <EmojiEventsIcon sx={{ mr: 1, color: '#ff2c7d' }} />
                     Leaderboard
                   </Typography>
                   
-                  {leaderboardData.length === 0 ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', py: 2 }}>
-                      <CircularProgress size={24} sx={{ mb: 1 }} />
-                      <Typography variant="body2" color="text.secondary">
-                        Loading leaderboard data...
-                      </Typography>
-                    </Box>
-                  ) : (
-                    <>
-                      <List dense>
-                        {leaderboardData.map((user, idx) => (
-                          <ListItem 
-                            key={user.email} 
-                            sx={{ 
-                              mb: 1,
-                              p: 1.5,
-                              backgroundColor: user.isCurrentUser 
-                                ? (darkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(25, 118, 210, 0.08)') 
-                                : (darkMode ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)'),
-                              borderRadius: '8px',
-                              border: user.isCurrentUser ? '1px solid' : 'none',
-                              borderColor: darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(25, 118, 210, 0.2)',
-                              transition: 'transform 0.2s ease',
-                              '&:hover': {
-                                transform: 'translateY(-2px)',
-                                backgroundColor: user.isCurrentUser 
-                                  ? (darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(25, 118, 210, 0.12)') 
-                                  : (darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)')
-                              }
+                  <Box sx={{ maxWidth: '450px', mx: 'auto' }}>
+                    {leaderboardData.length > 0 ? (
+                      leaderboardData.map((user, idx) => (
+                        <Paper
+                          key={user.email}
+                          elevation={0}
+                          sx={{
+                            p: 2,
+                            mb: 1.5,
+                            borderRadius: 3,
+                            backgroundColor: darkMode ? 'rgba(255, 255, 255, 0.04)' : 'rgba(240, 242, 245, 0.8)',
+                            border: user.isCurrentUser ? '1px solid' : 'none',
+                            borderColor: user.isCurrentUser ? 'primary.main' : 'transparent',
+                            position: 'relative',
+                            overflow: 'hidden'
+                          }}
+                        >
+                          {/* Rank indicator */}
+                          <Box
+                            sx={{
+                              position: 'absolute',
+                              left: 0,
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              width: '40px',
+                              height: '40px',
+                              borderRadius: '50%',
+                              backgroundColor: idx === 0 ? '#FFD700' : idx === 1 ? '#C0C0C0' : idx === 2 ? '#CD7F32' : 'primary.main',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              ml: 1.5,
+                              color: idx < 3 ? 'black' : 'white',
+                              fontWeight: 'bold',
+                              fontSize: '18px'
                             }}
                           >
-                            <ListItemIcon>
-                              <Avatar 
-                                sx={{ 
-                                  bgcolor: 
-                                    idx === 0 ? '#FFD700' : // Gold
-                                    idx === 1 ? '#C0C0C0' : // Silver
-                                    idx === 2 ? '#CD7F32' : // Bronze
-                                    theme.palette.primary.main,
-                                  color: idx < 3 ? '#000' : '#fff',
-                                  width: 36, 
-                                  height: 36, 
-                                  fontWeight: 'bold',
-                                  border: idx < 3 ? '2px solid' : 'none',
-                                  borderColor: 
-                                    idx === 0 ? '#FFB900' : 
-                                    idx === 1 ? '#A9A9A9' : 
-                                    '#B87333',
-                                  boxShadow: idx < 3 ? '0 2px 4px rgba(0,0,0,0.2)' : 'none'
-                                }}
-                              >
-                                {idx + 1}
-                              </Avatar>
-                            </ListItemIcon>
-                            <ListItemText 
-                              primary={
-                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                  <Typography 
-                                    variant="body1" 
+                            {idx + 1}
+                          </Box>
+
+                          <Box sx={{ 
+                            display: 'flex', 
+                            flexDirection: 'column',
+                            ml: 6,
+                            mr: 1
+                          }}>
+                            {/* User info */}
+                            <Box sx={{ 
+                              display: 'flex', 
+                              alignItems: 'center',
+                              justifyContent: 'space-between' 
+                            }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                <Typography 
+                                  variant="subtitle1" 
+                                  color="primary.main"
+                                  fontWeight="bold"
+                                >
+                                  {user.name.toUpperCase()}
+                                </Typography>
+                                {user.isCurrentUser && (
+                                  <Chip 
+                                    label="You" 
+                                    size="small" 
                                     sx={{ 
-                                      fontWeight: user.isCurrentUser ? 'bold' : 'medium',
-                                      color: user.isCurrentUser ? 'primary.main' : 'inherit'
-                                    }}
-                                  >
-                                    {user.name}
-                                  </Typography>
-                                  {user.isCurrentUser && (
-                                    <Chip 
-                                      label="You" 
-                                      size="small" 
-                                      color="primary" 
-                                      variant="outlined"
-                                      sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
-                                    />
-                                  )}
-                                  {idx === 0 && (
-                                    <Typography component="span" sx={{ ml: 1, color: '#FFD700', display: 'flex', alignItems: 'center' }}>
-                                      <EmojiEventsIcon fontSize="small" />
-                                    </Typography>
-                                  )}
-                                </Box>
-                              }
-                              secondary={
-                                <Stack direction="row" spacing={1} sx={{ mt: 0.5 }} flexWrap="wrap">
-                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                    <Typography variant="caption" sx={{ color: theme.palette.secondary.main, fontWeight: 'bold' }}>
-                                      {user.avgScore}%
-                                    </Typography>
-                                  </Box>
-                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                    <Typography variant="caption">
-                                      {user.totalTests} tests
-                                    </Typography>
-                                  </Box>
-                                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                                    <Chip 
-                                      label={user.level} 
-                                      size="small"
-                                      sx={{ 
-                                        height: 18, 
-                                        fontSize: '0.65rem',
-                                        backgroundColor: 
-                                          user.level === 'Expert' ? '#4caf50' : 
-                                          user.level === 'Advanced' ? '#ff9800' : 
-                                          user.level === 'Intermediate' ? '#2196f3' : 
-                                          '#9e9e9e',
-                                        color: '#fff'
-                                      }}
-                                    />
-                                  </Box>
-                                </Stack>
-                              }
-                            />
-                          </ListItem>
-                        ))}
-                      </List>
-                      
-                      <Button 
-                        variant="text" 
-                        size="small" 
-                        onClick={navigateToHistory}
-                        endIcon={<ArrowForwardIcon fontSize="small" />}
-                        sx={{ mt: 1, fontSize: '0.85rem' }}
+                                      ml: 1, 
+                                      backgroundColor: darkMode ? 'rgba(25, 118, 210, 0.3)' : 'rgba(25, 118, 210, 0.15)',
+                                      color: darkMode ? 'primary.light' : 'primary.dark'
+                                    }} 
+                                  />
+                                )}
+                                {idx === 0 && (
+                                  <EmojiEventsIcon 
+                                    sx={{ ml: 1, color: '#FFD700' }}
+                                  />
+                                )}
+                              </Box>
+                              <Typography 
+                                variant="h6" 
+                                color="error"
+                                fontWeight="bold"
+                              >
+                                {user.avgScore}%
+                              </Typography>
+                            </Box>
+                            
+                            {/* User stats */}
+                            <Box sx={{ 
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              mt: 1
+                            }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                <Typography 
+                                  variant="body2" 
+                                  color="text.secondary"
+                                >
+                                  {user.totalTests} {user.totalTests === 1 ? 'test' : 'tests'}
+                                </Typography>
+                                <Chip 
+                                  label={user.level} 
+                                  size="small"
+                                  sx={{ 
+                                    ml: 1.5,
+                                    backgroundColor: darkMode ? 'rgba(158, 158, 158, 0.2)' : 'rgba(158, 158, 158, 0.15)', 
+                                    color: 'text.secondary',
+                                    height: '20px',
+                                    fontSize: '0.7rem'
+                                  }}
+                                />
+                              </Box>
+                              <Typography 
+                                variant="body2" 
+                                color="success.main"
+                              >
+                                Best: {user.bestScore}%
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Paper>
+                      ))
+                    ) : (
+                      <Paper 
+                        elevation={0}
+                        sx={{
+                          p: 3,
+                          textAlign: 'center',
+                          borderRadius: 3,
+                          backgroundColor: darkMode ? 'rgba(255, 255, 255, 0.04)' : 'rgba(240, 242, 245, 0.8)',
+                        }}
                       >
-                        View full history
-                      </Button>
-                    </>
-                  )}
+                        <Typography color="text.secondary">
+                          No data available
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                          Take quizzes to appear on the leaderboard
+                        </Typography>
+                      </Paper>
+                    )}
+                  </Box>
+                  
+                  <Box sx={{ textAlign: 'center', mt: 2 }}>
+                    <Button
+                      endIcon={<ArrowForwardIcon />}
+                      onClick={() => navigate('/score-history')}
+                      sx={{ 
+                        textTransform: 'none',
+                        fontWeight: 'medium',
+                        color: darkMode ? 'primary.light' : 'primary.main'
+                      }}
+                    >
+                      View Full History
+                    </Button>
+                  </Box>
                 </Paper>
               </Stack>
             </Grid>
@@ -1822,25 +1849,145 @@ const Home = ({ darkMode, toggleTheme }) => {
         </Paper>
       </Container>
       
-      {/* Floating Action Button for quick test start */}
-      <Fab 
-        color="primary" 
-        aria-label="start test"
-        onClick={startQuiz}
-        sx={{ 
-          position: 'fixed',
-          bottom: 20,
-          right: 20,
-          background: `linear-gradient(45deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
-          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
-          animation: `${fadeIn} 2.2s ease-out`,
-          '&:hover': {
-            transform: 'scale(1.1)',
+      {/* Topic selection dialog */}
+      <Dialog 
+        open={topicDialogOpen} 
+        onClose={handleTopicDialogClose}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+            background: darkMode ? 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)' : 'white'
           }
         }}
       >
-        <AddIcon />
-      </Fab>
+        <DialogTitle sx={{ 
+          fontWeight: 'bold', 
+          color: darkMode ? 'white' : 'inherit',
+          borderBottom: '1px solid',
+          borderColor: darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+          pb: 2
+        }}>
+          Select Quiz Topic
+        </DialogTitle>
+        <DialogContent>
+          <List>
+            <ListItem button onClick={() => selectTopic('Random')} sx={{ borderRadius: 2, mb: 1 }}>
+              <ListItemIcon>
+                <CategoryIcon color="primary" />
+              </ListItemIcon>
+              <ListItemText 
+                primary="Random Mix" 
+                secondary="Questions from various topics"
+                primaryTypographyProps={{ fontWeight: 'bold', color: darkMode ? 'white' : 'inherit' }}
+                secondaryTypographyProps={{ color: darkMode ? 'rgba(255,255,255,0.7)' : 'inherit' }}
+              />
+            </ListItem>
+            {aptitudeTopics.map((topic) => (
+              <ListItem key={topic} button onClick={() => selectTopic(topic)} sx={{ borderRadius: 2, mb: 1 }}>
+                <ListItemIcon>
+                  <CategoryIcon color="primary" />
+                </ListItemIcon>
+                <ListItemText 
+                  primary={topic}
+                  primaryTypographyProps={{ fontWeight: 'bold', color: darkMode ? 'white' : 'inherit' }}
+                />
+              </ListItem>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, borderTop: '1px solid', borderColor: darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+          <Button onClick={handleTopicDialogClose} variant="outlined">
+            Cancel
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* SpeedDial */}
+      <SpeedDial
+        ariaLabel="Test options"
+        sx={{
+          position: 'fixed',
+          bottom: 20,
+          right: 20,
+          '& .MuiSpeedDial-actions': {
+            gap: '10px',
+            paddingBottom: '16px'
+          }
+        }}
+        icon={<SpeedDialIcon icon={<AddIcon />} />}
+        onClose={handleSpeedDialClose}
+        onOpen={handleSpeedDialOpen}
+        open={speedDialOpen}
+        direction="up"
+        FabProps={{
+          sx: {
+            background: `linear-gradient(45deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+            animation: `${fadeIn} 2.2s ease-out`,
+            '&:hover': {
+              transform: 'scale(1.05)',
+              background: `linear-gradient(45deg, ${theme.palette.secondary.main}, ${theme.palette.primary.main})`,
+            }
+          }
+        }}
+      >
+        {speedDialActions.map((action) => (
+          <SpeedDialAction
+            key={action.name}
+            icon={
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                width: '180px', 
+                justifyContent: 'space-between',
+              }}>
+                <Typography variant="body2" sx={{ 
+                  fontWeight: 'medium',
+                  color: 'text.primary', 
+                  pl: 2,
+                  flexGrow: 1
+                }}>
+                  {action.name}
+                </Typography>
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  bgcolor: 'background.paper',
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
+                  color: theme.palette.primary.main
+                }}>
+                  {action.icon}
+                </Box>
+              </Box>
+            }
+            tooltipTitle=""
+            onClick={() => {
+              action.action();
+              handleSpeedDialClose();
+            }}
+            FabProps={{
+              sx: {
+                bgcolor: 'background.paper',
+                boxShadow: '0 2px 10px rgba(0, 0, 0, 0.15)',
+                borderRadius: '24px',
+                width: 'auto',
+                height: '48px',
+                '&:hover': {
+                  transform: 'scale(1.03)',
+                  bgcolor: 'background.paper',
+                }
+              }
+            }}
+          />
+        ))}
+      </SpeedDial>
     </Box>
   );
 };

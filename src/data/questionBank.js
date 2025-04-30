@@ -2154,3 +2154,70 @@ export const getQuestionsByCategories = (categories, n = 30) => {
   const shuffled = [...filteredQuestions].sort(() => 0.5 - Math.random());
   return shuffled.slice(0, n);
 }; 
+
+// Function to get questions for a specific topic
+export const getTopicQuestions = (topic, n = 30, user = null) => {
+  // If topic is "Random", just return random questions
+  if (topic === "Random") {
+    return getRandomQuestions(n, user);
+  }
+  
+  // Find the category in question bank
+  const categoryObj = questionBank.find(cat => cat.category === topic);
+  
+  // If category not found, fallback to random questions
+  if (!categoryObj) {
+    console.warn(`Topic "${topic}" not found in question bank. Falling back to random questions.`);
+    return getRandomQuestions(n, user);
+  }
+  
+  // Add category to each question
+  const topicQuestions = categoryObj.questions.map(q => ({
+    ...q,
+    category: categoryObj.category
+  }));
+  
+  // Track answered questions by user if provided
+  let answeredIds = [];
+  let userKey = null;
+  if (user && user.email) {
+    userKey = `answeredQuestions_${topic}_${user.email}`;
+    answeredIds = JSON.parse(localStorage.getItem(userKey) || '[]');
+  }
+  
+  // Filter available questions
+  let availableQuestions = topicQuestions.filter(q => !answeredIds.includes(q.id));
+  
+  // If not enough questions left, reset the pool
+  if (availableQuestions.length < n) {
+    if (userKey) localStorage.setItem(userKey, JSON.stringify([]));
+    availableQuestions = topicQuestions;
+    answeredIds = [];
+  }
+  
+  // Shuffle and pick n random questions
+  const shuffled = [...availableQuestions].sort(() => 0.5 - Math.random());
+  const result = shuffled.slice(0, Math.min(n, shuffled.length));
+  
+  // If we still don't have enough questions, fill with questions from other topics
+  if (result.length < n) {
+    const otherQuestions = questionBank
+      .filter(cat => cat.category !== topic)
+      .flatMap(cat => cat.questions.map(q => ({
+        ...q,
+        category: cat.category
+      })))
+      .sort(() => 0.5 - Math.random())
+      .slice(0, n - result.length);
+      
+    result.push(...otherQuestions);
+  }
+  
+  // Update answered list in localStorage
+  if (userKey) {
+    const newAnsweredIds = Array.from(new Set([...answeredIds, ...result.filter(q => q.category === topic).map(q => q.id)]));
+    localStorage.setItem(userKey, JSON.stringify(newAnsweredIds));
+  }
+  
+  return result;
+}; 
