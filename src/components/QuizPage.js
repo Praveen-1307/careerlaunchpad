@@ -29,6 +29,7 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import TimerIcon from '@mui/icons-material/Timer';
 import CategoryIcon from '@mui/icons-material/Category';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { getRandomQuestions, getTopicQuestions, questionBank } from '../data/questionBank';
 import { getCurrentUser } from '../utils/auth';
 import { auth, db } from '../firebase';
@@ -341,10 +342,11 @@ const QuizPage = ({ darkMode }) => {
           >
             <ArrowBackIcon />
           </IconButton>
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}>
+            <RocketLaunchIcon sx={{ mr: 1, color: 'white' }} />
             Career Launch Pad - {quizType === 'topic' ? `${selectedTopic} Quiz` : 
-                               quizType === 'timed' ? 'Timed Quiz' : 
-                               localStorage.getItem('customCategory') || 'Standard Quiz'}
+                              quizType === 'timed' ? 'Timed Quiz' : 
+                              localStorage.getItem('customCategory') || 'Standard Quiz'}
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             {quizType === 'timed' && timeLeft !== null && (
@@ -368,8 +370,8 @@ const QuizPage = ({ darkMode }) => {
                 sx={{ mr: 2 }} 
               />
             )}
-            <HelpOutlineIcon sx={{ mr: 1, color: darkMode ? 'inherit' : 'primary.main' }} />
-            <Typography variant="subtitle1" sx={{ mr: 2, color: darkMode ? 'inherit' : 'text.primary', fontWeight: 'medium' }}>
+            <HelpOutlineIcon sx={{ mr: 1, color: 'white' }} />
+            <Typography variant="subtitle1" sx={{ mr: 2, color: 'white', fontWeight: 'medium' }}>
               Questions: {Object.keys(answers).length}/{questions.length}
             </Typography>
             {user && (

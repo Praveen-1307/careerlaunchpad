@@ -51,6 +51,7 @@ import PeopleIcon from '@mui/icons-material/People';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import DescriptionIcon from '@mui/icons-material/Description';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import SpeedDial from '@mui/material/SpeedDial';
 import SpeedDialIcon from '@mui/material/SpeedDialIcon';
 import SpeedDialAction from '@mui/material/SpeedDialAction';
@@ -874,6 +875,8 @@ const Home = ({ darkMode, toggleTheme }) => {
             sx={{ 
               flexGrow: 1,
               fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
               background: darkMode 
                 ? 'linear-gradient(45deg, #2196F3, #21CBF3)' 
                 : 'linear-gradient(45deg, #1565C0, #1976D2)',
@@ -881,6 +884,7 @@ const Home = ({ darkMode, toggleTheme }) => {
               WebkitTextFillColor: 'transparent',
             }}
           >
+            <RocketLaunchIcon sx={{ mr: 1.5, color: '#1976d2', fontSize: '1.8rem' }} />
             Career Launch Pad
           </Typography>
           <IconButton 
